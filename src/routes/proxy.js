@@ -273,21 +273,47 @@ async function handleChatCompletions(req, res) {
     });
   }
 
-  // Convert Anthropic system field to system message for OpenAI-compatible providers
-  if (targetProvider !== 'minimax' && processedBody.system) {
-    let sysContent = '';
-    if (typeof processedBody.system === 'string') {
-      sysContent = processedBody.system;
-    } else if (Array.isArray(processedBody.system)) {
-      sysContent = processedBody.system
-        .filter(c => c.type === 'text')
-        .map(c => c.text)
-        .join('\n');
+  // Handle system field based on provider compatibility
+  // Anthropic-compatible endpoints (GLM, MiniMax): keep system as top-level field
+  // OpenAI-compatible endpoints (Z.ai Direct): convert to role: 'system' message
+  if (providerConfig.anthropicCompatible) {
+    // Keep system as top-level field
+    if (processedBody.system) {
+      if (Array.isArray(processedBody.system)) {
+        body.system = processedBody.system
+          .filter(c => c.type === 'text')
+          .map(c => c.text)
+          .join('\n');
+      } else {
+        body.system = processedBody.system;
+      }
     }
-    if (sysContent) {
-      body.messages = [{ role: 'system', content: sysContent }, ...(body.messages || [])];
+    // Extract any system messages from messages array and merge into top-level
+    const systemMsgs = body.messages?.filter(m => m.role === 'system') || [];
+    if (systemMsgs.length > 0) {
+      const extracted = systemMsgs.map(m =>
+        typeof m.content === 'string' ? m.content : JSON.stringify(m.content)
+      ).join('\n');
+      body.system = body.system ? body.system + '\n' + extracted : extracted;
+      body.messages = body.messages.filter(m => m.role !== 'system');
     }
-    delete body.system;
+  } else {
+    // OpenAI-compatible: convert system to message
+    if (processedBody.system) {
+      let sysContent = '';
+      if (typeof processedBody.system === 'string') {
+        sysContent = processedBody.system;
+      } else if (Array.isArray(processedBody.system)) {
+        sysContent = processedBody.system
+          .filter(c => c.type === 'text')
+          .map(c => c.text)
+          .join('\n');
+      }
+      if (sysContent) {
+        body.messages = [{ role: 'system', content: sysContent }, ...(body.messages || [])];
+      }
+      delete body.system;
+    }
   }
 
   logProxy(requestId, targetProvider, finalModel, 'Body built', {
