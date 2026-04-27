@@ -267,6 +267,40 @@ async function forwardToProvider(targetUrl, headers, body, providerConfig, timeo
 /**
  * Send response back to client (handles both streaming and non-streaming)
  */
+/**
+ * Normalize provider response to standard Anthropic format
+ * Handles MiniMax thinking blocks, extra fields, etc.
+ */
+function normalizeResponse(data, provider) {
+  if (!data || typeof data !== 'object') return data;
+  
+  const normalized = { ...data };
+  
+  // Remove provider-specific fields that might confuse clients
+  delete normalized.base_resp;
+  
+  // Normalize content array
+  if (Array.isArray(normalized.content)) {
+    const hasText = normalized.content.some(c => c.type === 'text');
+    const hasThinking = normalized.content.some(c => c.type === 'thinking');
+    
+    // If only thinking blocks exist, convert them to text
+    if (hasThinking && !hasText) {
+      normalized.content = normalized.content.map(block => {
+        if (block.type === 'thinking') {
+          return {
+            type: 'text',
+            text: block.thinking || block.text || ''
+          };
+        }
+        return block;
+      });
+    }
+  }
+  
+  return normalized;
+}
+
 async function sendResponse(res, response, targetProvider, finalModel, mediaProcessed, visionProvider, requestId, isFallback = false) {
   const contentType = response.headers.get('content-type') || '';
   const isSSE = contentType.includes('text/event-stream') || contentType.includes('stream');
@@ -297,7 +331,10 @@ async function sendResponse(res, response, targetProvider, finalModel, mediaProc
     return;
   }
 
-  const data = await response.json();
+  let data = await response.json();
+  
+  // Normalize response format for Anthropic-compatible providers
+  data = normalizeResponse(data, targetProvider);
 
   logProxy(requestId, targetProvider, finalModel, 'Response received', {
     status: response.status,
