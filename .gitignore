@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Config with secrets (use config.example.json as template)
+config.json
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment (we use config.json instead)
+.env
+.env.local
+.env.*.local

@@ -1,0 +1,87 @@
+{
+  "server": {
+    "port": 3000,
+    "host": "0.0.0.0",
+    "corsOrigins": "*",
+    "env": "development"
+  },
+  "security": {
+    "apiKeys": [
+      "sk-yi-proxy-local-dev"
+    ],
+    "rateLimit": {
+      "windowMs": 60000,
+      "maxRequests": 200
+    }
+  },
+  "providers": {
+    "glm": {
+      "name": "GLM (Z.ai Coding Plan)",
+      "description": "GLM models via Z.ai platform. Supports vision with GLM-5.1.",
+      "baseUrl": "https://open.bigmodel.cn/api/paas/v4",
+      "endpoint": "/chat/completions",
+      "apiKey": "YOUR_GLM_API_KEY",
+      "timeout": 120000,
+      "models": [
+        "glm-5.1",
+        "glm-5-turbo",
+        "glm-4.7",
+        "glm-4-flash",
+        "glm-4-air"
+      ],
+      "visionModels": [
+        "glm-5.1"
+      ],
+      "modelMap": {
+        "claude-3-5-sonnet-20240620": "glm-5-turbo",
+        "claude-3-opus-20240229": "glm-5.1",
+        "claude-3-sonnet-20240229": "glm-5-turbo",
+        "gpt-4o": "glm-5-turbo",
+        "gpt-4o-mini": "glm-4-flash"
+      },
+      "capabilities": ["vision", "streaming"]
+    },
+    "minimax": {
+      "name": "MiniMax (Coding Plan)",
+      "description": "MiniMax M2.7 via Anthropic-compatible endpoint. NO vision support.",
+      "baseUrl": "https://api.minimax.io",
+      "endpoint": "/anthropic/v1/messages",
+      "apiKey": "YOUR_MINIMAX_API_KEY",
+      "timeout": 120000,
+      "models": [
+        "MiniMax-M2.7"
+      ],
+      "visionModels": [],
+      "modelMap": {
+        "minimax-m2.7": "MiniMax-M2.7",
+        "MiniMax-M2.7-highspeed": "MiniMax-M2.7"
+      },
+      "capabilities": ["text-only"],
+      "note": "MiniMax does NOT support vision. Images will be converted to text via GLM."
+    },
+    "zai": {
+      "name": "Z.ai (Direct API)",
+      "description": "Direct Z.ai API access for Claude models.",
+      "baseUrl": "https://api.z.ai/v1",
+      "endpoint": "/chat/completions",
+      "apiKey": "YOUR_ZAI_API_KEY",
+      "timeout": 120000,
+      "models": ["glm-5.1", "glm-5-turbo"],
+      "visionModels": ["glm-5.1", "glm-5v-turbo"],
+      "capabilities": ["vision", "streaming"]
+    }
+  },
+  "visionFallback": {
+    "enabled": true,
+    "provider": "glm",
+    "model": "glm-5.1",
+    "description": "When non-vision provider receives images, convert using GLM-5.1 vision"
+  },
+  "aliases": {
+    "claude-opus": "glm",
+    "claude-sonnet": "glm",
+    "claude-haiku": "glm",
+    "gpt-4": "glm",
+    "minimax": "minimax"
+  }
+}

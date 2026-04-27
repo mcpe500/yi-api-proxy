@@ -1,0 +1,434 @@
+/**
+ * Proxy Routes - Routes requests to GLM, Z.ai, MiniMax providers
+ * 
+ * Supports:
+ * - GLM (Z.ai Coding Plan) with vision (GLM-5.1)
+ * - MiniMax M2.7 (NO vision - images auto-converted via GLM)
+ * - Z.ai direct API with Claude models
+ */
+
+import express from 'express';
+import { rateLimit } from '../middleware/rateLimit.js';
+import { validateApiKey } from '../middleware/auth.js';
+import { hasImages, processImages } from '../middleware/mediaHandler.js';
+import { log, logProxy, logError } from '../lib/logger.js';
+
+const router = express.Router();
+
+/**
+ * POST /v1/chat/completions
+ * Universal proxy endpoint
+ * 
+ * Headers:
+ *   X-API-Key: Your API key (required)
+ *   X-Provider: glm|zai|minimax (optional, auto-detect from model)
+ *   X-Model: Override model (optional)
+ * 
+ * Body: OpenAI-compatible chat completion format
+ */
+router.post('/chat/completions', validateApiKey, rateLimit, handleChatCompletions);
+
+router.post('/messages', validateApiKey, rateLimit, handleChatCompletions);
+
+/**
+ * GET /v1/models
+ * List available models for all or specific provider
+ */
+router.get('/models', validateApiKey, handleListModels);
+
+/**
+ * GET /v1/providers
+ * List all providers and their capabilities
+ */
+router.get('/providers', (req, res) => {
+  const config = global.config;
+  const providers = Object.entries(config.providers).map(([key, cfg]) => ({
+    name: key,
+    displayName: cfg.name,
+    description: cfg.description,
+    models: cfg.models || [],
+    visionModels: cfg.visionModels || [],
+    hasVision: (cfg.visionModels?.length || 0) > 0,
+    capabilities: cfg.capabilities || []
+  }));
+  res.json({ providers });
+});
+
+/**
+ * GET /v1/health/:provider
+ * Health check for specific provider
+ */
+router.get('/health/:provider', async (req, res) => {
+  const { provider } = req.params;
+  const config = global.config;
+  const providerConfig = config.providers[provider];
+  
+  if (!providerConfig) {
+    return res.status(404).json({ error: 'Provider not found' });
+  }
+  
+  try {
+    const testBody = {
+      model: providerConfig.models?.[0] || 'test',
+      messages: [{ role: 'user', content: 'ping' }],
+      max_tokens: 1
+    };
+    
+    const response = await fetch(providerConfig.baseUrl + providerConfig.endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${providerConfig.apiKey}`
+      },
+      body: JSON.stringify(testBody)
+    });
+    
+    res.json({
+      provider,
+      status: response.ok ? 'ok' : 'error',
+      statusCode: response.status
+    });
+  } catch (error) {
+    res.json({
+      provider,
+      status: 'error',
+      error: error.message
+    });
+  }
+});
+
+async function handleChatCompletions(req, res) {
+  const requestId = req.requestId || 'unknown';
+  const config = global.config;
+  const { provider: requestedProvider, model: requestedModel } = req.headers;
+  const requestedModelBody = req.body?.model;
+  const targetModel = requestedModel || requestedModelBody;
+
+  logProxy(requestId, requestedProvider || 'auto', targetModel, 'Request received');
+
+  if (!targetModel) {
+    logProxy(requestId, requestedProvider || 'auto', '?', 'Missing model');
+    return res.status(400).json({ 
+      error: 'Missing model',
+      message: 'Provide model in body or X-Model header',
+      requestId
+    });
+  }
+  
+  // Auto-detect provider from model name
+  let targetProvider = requestedProvider?.toLowerCase();
+  
+  if (!targetProvider) {
+    const modelLower = targetModel.toLowerCase();
+    
+    // Check model aliases
+    for (const [alias, provider] of Object.entries(config.aliases || {})) {
+      if (modelLower.includes(alias)) {
+        targetProvider = provider;
+        break;
+      }
+    }
+    
+    // Check model prefixes against providers
+    if (!targetProvider) {
+      for (const [key, cfg] of Object.entries(config.providers)) {
+        if (cfg.models?.some(m => modelLower.startsWith(m.toLowerCase())) ||
+            cfg.visionModels?.some(m => modelLower.startsWith(m.toLowerCase()))) {
+          targetProvider = key;
+          break;
+        }
+      }
+    }
+    
+    // Default to first provider if not detected
+    targetProvider = targetProvider || Object.keys(config.providers)[0];
+  }
+  
+  // Get provider config
+  const providerConfig = config.providers[targetProvider];
+  
+  if (!providerConfig) {
+    return res.status(400).json({
+      error: 'Invalid provider',
+      available: Object.keys(config.providers),
+      hint: 'Try: glm, minimax, or zai'
+    });
+  }
+  
+  // Determine final model
+  let finalModel = targetModel;
+
+  // Check if model needs mapping (case-insensitive lookup)
+  if (providerConfig.modelMap?.[targetModel]) {
+    finalModel = providerConfig.modelMap[targetModel];
+  } else if (providerConfig.modelMap?.[targetModel.toLowerCase()]) {
+    finalModel = providerConfig.modelMap[targetModel.toLowerCase()];
+  } else {
+    // Try to find canonical model name from provider's models list
+    const modelLower = targetModel.toLowerCase();
+    const canonicalModel = providerConfig.models?.find(m => m.toLowerCase() === modelLower);
+    if (canonicalModel && canonicalModel !== targetModel) {
+      finalModel = canonicalModel;
+    }
+  }
+  
+  // Handle images if present
+  let processedBody = req.body;
+  let mediaProcessed = false;
+  let visionProvider = null;
+  
+  if (hasImages(req.body)) {
+    // Check if provider supports vision
+    const hasVision = providerConfig.visionModels?.some(m => finalModel.startsWith(m));
+    
+    if (!hasVision && config.visionFallback?.enabled) {
+      // Non-vision provider with images - use fallback
+      try {
+        const { modifiedBody, visionProv } = await processImages(req.body, config, finalModel);
+        if (modifiedBody) {
+          processedBody = modifiedBody;
+          mediaProcessed = true;
+          visionProvider = visionProv;
+        }
+      } catch (error) {
+        console.error('Image processing error:', error.message);
+        // Continue without image processing
+      }
+    } else if (!hasVision) {
+      return res.status(400).json({
+        error: 'Provider does not support vision',
+        provider: targetProvider,
+        model: finalModel,
+        hint: 'Use GLM-5.1 for vision support'
+      });
+    }
+  }
+  
+  // Build request URL
+  const targetUrl = providerConfig.baseUrl + providerConfig.endpoint;
+  
+  // Build headers
+  const headers = {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${providerConfig.apiKey}`
+  };
+  
+// Provider-specific header adjustments
+  if (targetProvider === 'minimax') {
+    // MiniMax Anthropic-compatible API
+    headers['x-api-key'] = providerConfig.apiKey;
+    headers['anthropic-version'] = '2023-06-01';
+    delete headers['Authorization'];
+  }
+
+  // Extra headers from config
+  if (providerConfig.extraHeaders) {
+    Object.assign(headers, providerConfig.extraHeaders);
+  }
+
+  // Build request body - Anthropic format for MiniMax, OpenAI for others
+  const body = {
+    model: finalModel,
+    messages: processedBody.messages || processedBody.contents || []
+  };
+
+  // Handle Anthropic content format (has content array directly)
+  if (processedBody.content && !processedBody.messages) {
+    body.messages = processedBody.content;
+  }
+
+  // Normalize message content for OpenAI-compatible providers (GLM, Z.ai)
+  // Anthropic sends content as [{type:"text"},{type:"thinking"},{type:"tool_use"},...]
+  // GLM expects plain string content
+  if (targetProvider !== 'minimax' && body.messages) {
+    body.messages = body.messages.map(msg => {
+      if (!msg.content) return msg;
+      if (typeof msg.content === 'string') return msg;
+
+      if (Array.isArray(msg.content)) {
+        const parts = [];
+        for (const block of msg.content) {
+          if (block.type === 'text' && block.text) {
+            parts.push(block.text);
+          } else if (block.type === 'tool_result' && block.content) {
+            if (typeof block.content === 'string') parts.push(block.content);
+            else if (Array.isArray(block.content)) {
+              for (const sub of block.content) {
+                if (sub.type === 'text' && sub.text) parts.push(sub.text);
+              }
+            }
+          } else if (block.type === 'tool_use' && block.name) {
+            parts.push(`[Tool: ${block.name}(${typeof block.input === 'object' ? JSON.stringify(block.input) : block.input || ''})]`);
+          } else if (block.type === 'thinking' && block.thinking) {
+            // Skip thinking blocks for GLM - not needed
+          }
+        }
+        return { ...msg, content: parts.join('\n') || '' };
+      }
+
+      if (typeof msg.content === 'object') {
+        return { ...msg, content: JSON.stringify(msg.content) };
+      }
+      return msg;
+    });
+  }
+
+  // Convert Anthropic system field to system message for OpenAI-compatible providers
+  if (targetProvider !== 'minimax' && processedBody.system) {
+    let sysContent = '';
+    if (typeof processedBody.system === 'string') {
+      sysContent = processedBody.system;
+    } else if (Array.isArray(processedBody.system)) {
+      sysContent = processedBody.system
+        .filter(c => c.type === 'text')
+        .map(c => c.text)
+        .join('\n');
+    }
+    if (sysContent) {
+      body.messages = [{ role: 'system', content: sysContent }, ...(body.messages || [])];
+    }
+    delete body.system;
+  }
+
+  logProxy(requestId, targetProvider, finalModel, 'Body built', {
+    msgCount: body.messages?.length,
+    msgTypes: body.messages?.slice(0, 5).map(m => ({
+      role: m.role,
+      contentType: typeof m.content,
+      preview: typeof m.content === 'string'
+        ? m.content.slice(0, 100)
+        : Array.isArray(m.content)
+          ? m.content.map(c => c.type).join(',')
+          : 'other'
+    })),
+    stream: body.stream,
+    maxTokens: body.max_tokens
+  });
+
+  // Copy other relevant fields
+  if (processedBody.temperature) body.temperature = processedBody.temperature;
+  if (processedBody.max_tokens) body.max_tokens = processedBody.max_tokens;
+  if (processedBody.top_p) body.top_p = processedBody.top_p;
+  if (processedBody.stream !== undefined) body.stream = processedBody.stream;
+  if (processedBody.stop) body.stop = processedBody.stop;
+  
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), providerConfig.timeout || 120000);
+
+    logProxy(requestId, targetProvider, finalModel, 'Forwarding request', {
+      targetUrl: targetUrl.replace(providerConfig.apiKey, '***'),
+      hasImages: hasImages(req.body),
+      mediaProcessed
+    });
+
+    const response = await fetch(targetUrl, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+      signal: controller.signal
+    });
+
+    clearTimeout(timeout);
+
+    const contentType = response.headers.get('content-type') || '';
+    const isSSE = contentType.includes('text/event-stream') || contentType.includes('stream');
+
+    if (isSSE) {
+      logProxy(requestId, targetProvider, finalModel, 'Streaming response', { status: response.status });
+      res.status(response.status);
+      for (const [key, value] of response.headers.entries()) {
+        if (!['content-encoding', 'content-length', 'transfer-encoding'].includes(key.toLowerCase())) {
+          res.setHeader(key, value);
+        }
+      }
+      try {
+        const reader = response.body.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value) res.write(value);
+        }
+        res.end();
+      } catch (streamErr) {
+        logError(requestId, streamErr, { provider: targetProvider, model: finalModel, stage: 'stream' });
+        if (!res.headersSent) {
+          res.status(502).json({ error: 'Stream failed', requestId });
+        } else {
+          res.end();
+        }
+      }
+      return;
+    }
+
+    const data = await response.json();
+
+    logProxy(requestId, targetProvider, finalModel, 'Response received', {
+      status: response.status,
+      mediaProcessed,
+      error: data.error,
+      errorCode: data.error?.code,
+      errorMessage: data.error?.message
+    });
+
+    res.status(response.status);
+    res.json({
+      ...data,
+      _provider: targetProvider,
+      _model: finalModel,
+      _mediaProcessed: mediaProcessed,
+      _visionProvider: visionProvider,
+      requestId
+    });
+
+  } catch (error) {
+    logError(requestId, error, { provider: targetProvider, model: finalModel });
+
+    if (res.headersSent) {
+      res.end();
+      return;
+    }
+
+    if (error.name === 'AbortError') {
+      return res.status(504).json({ 
+        error: 'Request timeout', 
+        provider: targetProvider,
+        timeout: providerConfig.timeout || 120000,
+        requestId
+      });
+    }
+
+    res.status(502).json({ 
+      error: 'Proxy request failed',
+      message: error.message,
+      provider: targetProvider,
+      requestId
+    });
+  }
+}
+
+async function handleListModels(req, res) {
+  const requestedProvider = (req.headers['x-provider'] || '').toLowerCase();
+  
+  if (requestedProvider && global.config.providers[requestedProvider]) {
+    const cfg = global.config.providers[requestedProvider];
+    return res.json({
+      provider: requestedProvider,
+      models: cfg.models || [],
+      visionModels: cfg.visionModels || []
+    });
+  }
+  
+  // Return all models from all providers
+  const allModels = {};
+  for (const [name, cfg] of Object.entries(global.config.providers)) {
+    allModels[name] = {
+      models: cfg.models || [],
+      visionModels: cfg.visionModels || []
+    };
+  }
+  
+  res.json({ providers: allModels });
+}
+
+export default router;
