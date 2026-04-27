@@ -314,7 +314,7 @@ async function handleChatCompletions(req, res) {
   
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), providerConfig.timeout || 120000);
+    const timeout = setTimeout(() => controller.abort(), providerConfig.timeout || 3600000);
 
     logProxy(requestId, targetProvider, finalModel, 'Forwarding request', {
       targetUrl: targetUrl.replace(providerConfig.apiKey, '***'),
@@ -393,7 +393,7 @@ async function handleChatCompletions(req, res) {
       return res.status(504).json({ 
         error: 'Request timeout', 
         provider: targetProvider,
-        timeout: providerConfig.timeout || 120000,
+        timeout: providerConfig.timeout || 3600000,
         requestId
       });
     }

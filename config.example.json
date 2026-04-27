@@ -21,7 +21,7 @@
       "baseUrl": "https://open.bigmodel.cn/api/paas/v4",
       "endpoint": "/chat/completions",
       "apiKey": "YOUR_GLM_API_KEY",
-      "timeout": 120000,
+      "timeout": 3600000,
       "models": [
         "glm-5.1",
         "glm-5-turbo",
@@ -47,7 +47,7 @@
       "baseUrl": "https://api.minimax.io",
       "endpoint": "/anthropic/v1/messages",
       "apiKey": "YOUR_MINIMAX_API_KEY",
-      "timeout": 120000,
+      "timeout": 3600000,
       "models": [
         "MiniMax-M2.7"
       ],
@@ -65,7 +65,7 @@
       "baseUrl": "https://api.z.ai/v1",
       "endpoint": "/chat/completions",
       "apiKey": "YOUR_ZAI_API_KEY",
-      "timeout": 120000,
+      "timeout": 3600000,
       "models": ["glm-5.1", "glm-5-turbo"],
       "visionModels": ["glm-5.1", "glm-5v-turbo"],
       "capabilities": ["vision", "streaming"]

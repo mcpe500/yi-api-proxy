@@ -109,6 +109,9 @@ export async function runWizard() {
   const selectedProviders = selectedIndices.map(i => Object.keys(PROVIDER_INFO)[i]);
   const providers = {};
 
+  const timeoutAnswer = await ask('Request timeout (ms, default 3600000 = 1 hour)', '3600000');
+  const configuredTimeout = parseInt(timeoutAnswer, 10) || 3600000;
+
   for (const key of selectedProviders) {
     const info = PROVIDER_INFO[key];
     const sepLine = dim('─'.repeat(40));
@@ -140,7 +143,7 @@ export async function runWizard() {
       baseUrl: info.baseUrl,
       endpoint: info.endpoint,
       apiKey: validated.value,
-      timeout: 120000,
+      timeout: configuredTimeout,
       models: info.models,
       visionModels: info.visionModels,
       capabilities: info.capabilities
