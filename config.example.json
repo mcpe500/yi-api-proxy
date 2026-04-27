@@ -83,5 +83,27 @@
     "claude-haiku": "glm",
     "gpt-4": "glm",
     "minimax": "minimax"
+  },
+  "modelFallbacks": {
+    "glm-5.1": {
+      "fallbackModel": "minimax-m2.7",
+      "fallbackProvider": "minimax"
+    },
+    "glm-5-turbo": {
+      "fallbackModel": "minimax-m2.7",
+      "fallbackProvider": "minimax"
+    },
+    "glm-4.7": {
+      "fallbackModel": "minimax-m2.7",
+      "fallbackProvider": "minimax"
+    },
+    "glm-4-flash": {
+      "fallbackModel": "minimax-m2.7",
+      "fallbackProvider": "minimax"
+    },
+    "glm-4-air": {
+      "fallbackModel": "minimax-m2.7",
+      "fallbackProvider": "minimax"
+    }
   }
 }
