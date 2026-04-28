@@ -6,34 +6,128 @@ import { hasConfig, readConfig, writeConfigAtomic, rollback, validateSchema, pri
 const PROVIDER_INFO = {
   glm: {
     name: 'GLM (Z.ai Coding Plan)',
-    description: 'GLM models via Z.ai Coding Plan - Anthropic-compatible endpoint',
-    baseUrl: 'https://api.z.ai/api/anthropic',
-    endpoint: '/v1/messages',
+    description: 'GLM models via Z.ai platform. Supports vision with GLM-5.1.',
+    baseUrl: 'https://api.z.ai/api/coding/paas/v4',
+    endpoint: '/chat/completions',
+    type: 'openai',
     models: ['glm-5.1', 'glm-5-turbo', 'glm-4.7', 'glm-4-flash', 'glm-4-air'],
     visionModels: ['glm-5.1'],
-    capabilities: ['vision', 'streaming'],
-    anthropicCompatible: true
+    capabilities: ['vision', 'streaming', 'tools'],
+    modelMap: {
+      'claude-3-5-sonnet-20240620': 'glm-5-turbo',
+      'claude-3-opus-20240229': 'glm-5.1',
+      'claude-3-sonnet-20240229': 'glm-5-turbo',
+      'gpt-4o': 'glm-5-turbo',
+      'gpt-4o-mini': 'glm-4-flash'
+    }
   },
   minimax: {
-    name: 'MiniMax',
-    description: 'MiniMax M2.7 - fast text generation, NO vision support',
+    name: 'MiniMax (Coding Plan)',
+    description: 'MiniMax M2.7 via Anthropic-compatible endpoint. NO vision support.',
     baseUrl: 'https://api.minimax.io',
     endpoint: '/anthropic/v1/messages',
+    type: 'anthropic',
     models: ['MiniMax-M2.7'],
     visionModels: [],
-    capabilities: ['text-only'],
-    anthropicCompatible: true,
-    modelMap: { 'minimax-m2.7': 'MiniMax-M2.7' }
+    capabilities: ['text-only', 'streaming', 'tools'],
+    modelMap: {
+      'minimax-m2.7': 'MiniMax-M2.7',
+      'MiniMax-M2.7-highspeed': 'MiniMax-M2.7'
+    }
   },
   zai: {
-    name: 'Z.ai Direct',
-    description: 'Direct Z.ai API access with Claude models',
+    name: 'Z.ai (Direct API)',
+    description: 'Direct Z.ai API access for Claude models.',
     baseUrl: 'https://api.z.ai/v1',
     endpoint: '/chat/completions',
-    models: ['glm-5.1', 'glm-5-turbo', 'glm-5v-turbo'],
+    type: 'openai',
+    models: ['glm-5.1', 'glm-5-turbo'],
     visionModels: ['glm-5.1', 'glm-5v-turbo'],
-    capabilities: ['vision', 'streaming'],
-    anthropicCompatible: false
+    capabilities: ['vision', 'streaming', 'tools']
+  },
+  nvidia_nim: {
+    name: 'NVIDIA NIM',
+    description: 'NVIDIA NIM inference platform. Supports various models including GLM.',
+    baseUrl: 'https://integrate.api.nvidia.com/v1',
+    endpoint: '/chat/completions',
+    type: 'openai',
+    models: ['nvidia_nim/z-ai/glm4.7', 'nvidia_nim/meta/llama-3.1-405b-instruct'],
+    visionModels: ['nvidia_nim/z-ai/glm4.7'],
+    capabilities: ['vision', 'streaming', 'tools'],
+    modelMap: {
+      'claude-3-5-sonnet': 'nvidia_nim/z-ai/glm4.7',
+      'claude-3-opus': 'nvidia_nim/z-ai/glm4.7',
+      'claude-3-sonnet': 'nvidia_nim/z-ai/glm4.7'
+    }
+  },
+  openrouter: {
+    name: 'OpenRouter',
+    description: 'OpenRouter aggregates many AI models. Supports Claude, GPT, and more.',
+    baseUrl: 'https://openrouter.ai/api/v1',
+    endpoint: '/chat/completions',
+    type: 'openai',
+    models: ['anthropic/claude-3.5-sonnet', 'anthropic/claude-3-opus', 'openai/gpt-4o'],
+    visionModels: ['anthropic/claude-3.5-sonnet', 'anthropic/claude-3-opus', 'openai/gpt-4o'],
+    capabilities: ['vision', 'streaming', 'tools'],
+    modelMap: {
+      'claude-3-5-sonnet': 'anthropic/claude-3.5-sonnet',
+      'claude-3-opus': 'anthropic/claude-3-opus',
+      'claude-3-sonnet': 'anthropic/claude-3-sonnet',
+      'gpt-4o': 'openai/gpt-4o',
+      'gpt-4o-mini': 'openai/gpt-4o-mini'
+    }
+  },
+  deepseek: {
+    name: 'DeepSeek',
+    description: 'DeepSeek AI models. Cost-effective alternative.',
+    baseUrl: 'https://api.deepseek.com/v1',
+    endpoint: '/chat/completions',
+    type: 'openai',
+    models: ['deepseek-chat', 'deepseek-coder'],
+    visionModels: [],
+    capabilities: ['text-only', 'streaming', 'tools'],
+    modelMap: {
+      'claude-3-sonnet': 'deepseek-chat',
+      'gpt-4': 'deepseek-chat',
+      'gpt-4-turbo': 'deepseek-chat'
+    }
+  },
+  lm_studio: {
+    name: 'LM Studio (Local)',
+    description: 'Local LM Studio server. Run models locally.',
+    baseUrl: 'http://localhost:1234/v1',
+    endpoint: '/chat/completions',
+    type: 'openai',
+    models: ['local-model'],
+    visionModels: ['local-model'],
+    capabilities: ['vision', 'streaming', 'tools'],
+    modelMap: {}
+  },
+  llama_cpp: {
+    name: 'llama.cpp (Local)',
+    description: 'Local llama.cpp server. Run quantized models locally.',
+    baseUrl: 'http://localhost:8080/v1',
+    endpoint: '/chat/completions',
+    type: 'openai',
+    models: ['local-model'],
+    visionModels: [],
+    capabilities: ['text-only', 'streaming'],
+    modelMap: {}
+  },
+  ollama: {
+    name: 'Ollama (Local)',
+    description: 'Local Ollama server. Run open-source models locally.',
+    baseUrl: 'http://localhost:11434/v1',
+    endpoint: '/chat/completions',
+    type: 'openai',
+    models: ['llama3', 'llama3:70b', 'mistral', 'codellama'],
+    visionModels: ['llava', 'llava:13b'],
+    capabilities: ['vision', 'streaming', 'tools'],
+    modelMap: {
+      'claude-3-sonnet': 'llama3:70b',
+      'gpt-4': 'llama3:70b',
+      'gpt-4-turbo': 'llama3:70b'
+    }
   }
 };
 
@@ -142,6 +236,7 @@ export async function runWizard() {
       description: info.description,
       baseUrl: info.baseUrl,
       endpoint: info.endpoint,
+      type: info.type,
       apiKey: validated.value,
       timeout: configuredTimeout,
       models: info.models,
@@ -149,11 +244,8 @@ export async function runWizard() {
       capabilities: info.capabilities
     };
 
-    if (info.modelMap) {
+    if (info.modelMap && Object.keys(info.modelMap).length > 0) {
       providers[key].modelMap = info.modelMap;
-    }
-    if (info.anthropicCompatible) {
-      providers[key].anthropicCompatible = true;
     }
   }
 
@@ -192,7 +284,19 @@ export async function runWizard() {
     console.log(green('V') + ' Vision fallback enabled using GLM-5.1');
   }
 
-  stepHeader('Step 6: Model Aliases');
+  stepHeader('Step 6: Model Routing');
+  const enableModelRouting = await askConfirm('Enable per-model routing (Opus/Sonnet/Haiku tiers)?', true);
+  const modelRouting = { enabled: false };
+
+  if (enableModelRouting) {
+    modelRouting.enabled = true;
+    console.log(dim('Model routing will automatically route:'));
+    console.log(dim('  Opus tier (claude-3-opus, gpt-4) → GLM → NVIDIA NIM → OpenRouter'));
+    console.log(dim('  Sonnet tier (claude-3-sonnet, gpt-4o) → GLM → NVIDIA NIM → MiniMax'));
+    console.log(dim('  Haiku tier (claude-3-haiku, gpt-4o-mini) → MiniMax → GLM → DeepSeek'));
+  }
+
+  stepHeader('Step 7: Model Aliases');
   const aliases = {
     'claude-opus': 'glm',
     'claude-sonnet': 'glm',
@@ -209,6 +313,24 @@ export async function runWizard() {
   const config = {
     server,
     security,
+    enableModelRouting: enableModelRouting,
+    modelRouting: enableModelRouting ? {
+      opus: {
+        models: ['claude-3-opus', 'claude-3.5-opus', 'gpt-4', 'gpt-4-turbo'],
+        primaryProvider: 'glm',
+        fallbackProviders: ['nvidia_nim', 'openrouter', 'zai']
+      },
+      sonnet: {
+        models: ['claude-3-sonnet', 'claude-3.5-sonnet', 'gpt-4o', 'glm-5-turbo'],
+        primaryProvider: 'glm',
+        fallbackProviders: ['nvidia_nim', 'openrouter', 'minimax']
+      },
+      haiku: {
+        models: ['claude-3-haiku', 'gpt-4o-mini', 'glm-4-flash', 'glm-4-air'],
+        primaryProvider: 'minimax',
+        fallbackProviders: ['glm', 'deepseek', 'ollama']
+      }
+    } : undefined,
     providers,
     visionFallback,
     aliases
@@ -240,7 +362,7 @@ export async function runWizard() {
     return;
   }
 
-  stepHeader('Step 7: Post-Setup Validation');
+  stepHeader('Step 8: Post-Setup Validation');
   const results = await testAllProviders(config);
 
   const allOk = Object.values(results).every(r => r.ok);

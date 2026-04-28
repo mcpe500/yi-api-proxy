@@ -1,11 +1,16 @@
-# Yi API Proxy
+# Yi API Proxy v2.0
 
-Lightweight API proxy router for AI providers. Supports GLM (Z.ai Coding Plan), MiniMax, and Z.ai Direct with automatic vision handling.
+Modular AI API Proxy inspired by free-claude-code architecture. Supports multiple providers with per-model routing, automatic fallback, and advanced features.
 
 ## Features
 
-- **Multi-Provider Routing**: Route requests to GLM, MiniMax, or Z.ai Direct based on model name
-- **Vision Fallback**: Automatically converts images to text descriptions when using non-vision providers
+- **Multi-Provider Routing**: Route requests to GLM, MiniMax, Z.ai, NVIDIA NIM, OpenRouter, DeepSeek, LM Studio, llama.cpp, or Ollama
+- **Per-Model Routing**: Automatically routes Opus/Sonnet/Haiku tier models to optimal providers
+- **Automatic Fallback**: Seamlessly switches between providers on errors
+- **Vision Support**: Automatic vision fallback - converts images to text for non-vision providers
+- **Streaming**: Full SSE streaming support for all providers
+- **Tool Use**: Support for tool/function calling
+- **Thinking Blocks**: Handle reasoning/thinking blocks from providers
 - **Security**: API key validation and rate limiting
 - **Interactive Setup**: Wizard CLI for easy configuration
 - **File Logging**: JSON-structured logs for requests and providers
@@ -47,7 +52,7 @@ Edit `config.json` or use `npm run setup` for interactive configuration:
   "server": {
     "port": 3000,
     "host": "0.0.0.0",
-    "env": "development"
+    "corsOrigins": "*"
   },
   "security": {
     "apiKeys": ["your-proxy-api-key"],
@@ -56,21 +61,70 @@ Edit `config.json` or use `npm run setup` for interactive configuration:
       "maxRequests": 200
     }
   },
+  "enableModelRouting": true,
+  "modelRouting": {
+    "opus": {
+      "models": ["claude-3-opus", "gpt-4"],
+      "primaryProvider": "glm",
+      "fallbackProviders": ["nvidia_nim", "openrouter"]
+    },
+    "sonnet": {
+      "models": ["claude-3-sonnet", "gpt-4o"],
+      "primaryProvider": "glm",
+      "fallbackProviders": ["nvidia_nim", "minimax"]
+    },
+    "haiku": {
+      "models": ["claude-3-haiku", "gpt-4o-mini"],
+      "primaryProvider": "minimax",
+      "fallbackProviders": ["glm", "deepseek"]
+    }
+  },
   "providers": {
     "glm": {
       "name": "GLM (Z.ai Coding Plan)",
-      "baseUrl": "https://api.z.ai/api/anthropic",
-      "endpoint": "/v1/messages",
+      "baseUrl": "https://api.z.ai/api/coding/paas/v4",
+      "endpoint": "/chat/completions",
+      "type": "openai",
       "apiKey": "your-glm-api-key",
       "models": ["glm-5.1", "glm-5-turbo", "glm-4.7"],
-      "visionModels": ["glm-5.1"]
+      "visionModels": ["glm-5.1"],
+      "capabilities": ["vision", "streaming", "tools"]
     },
-    "minimax": {
-      "name": "MiniMax",
-      "baseUrl": "https://api.minimax.io",
-      "endpoint": "/anthropic/v1/messages",
-      "apiKey": "your-minimax-api-key",
-      "models": ["MiniMax-M2.7"]
+    "nvidia_nim": {
+      "name": "NVIDIA NIM",
+      "baseUrl": "https://integrate.api.nvidia.com/v1",
+      "endpoint": "/chat/completions",
+      "type": "openai",
+      "apiKey": "your-nvidia-nim-api-key",
+      "models": ["nvidia_nim/z-ai/glm4.7"],
+      "capabilities": ["vision", "streaming", "tools"]
+    },
+    "openrouter": {
+      "name": "OpenRouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "endpoint": "/chat/completions",
+      "type": "openai",
+      "apiKey": "your-openrouter-api-key",
+      "models": ["anthropic/claude-3.5-sonnet"],
+      "capabilities": ["vision", "streaming", "tools"]
+    },
+    "deepseek": {
+      "name": "DeepSeek",
+      "baseUrl": "https://api.deepseek.com/v1",
+      "endpoint": "/chat/completions",
+      "type": "openai",
+      "apiKey": "your-deepseek-api-key",
+      "models": ["deepseek-chat"],
+      "capabilities": ["text-only", "streaming", "tools"]
+    },
+    "ollama": {
+      "name": "Ollama (Local)",
+      "baseUrl": "http://localhost:11434/v1",
+      "endpoint": "/chat/completions",
+      "type": "openai",
+      "apiKey": "dummy",
+      "models": ["llama3", "mistral"],
+      "capabilities": ["vision", "streaming", "tools"]
     }
   },
   "visionFallback": {
@@ -159,44 +213,83 @@ When you send an image to a non-vision provider (like MiniMax):
 
 This allows you to use vision-capable models without changing your code.
 
+## Supported Providers
+
+### Cloud Providers
+- **GLM (Z.ai Coding Plan)** - Vision, streaming, tools
+- **MiniMax** - Text-only, streaming, tools
+- **Z.ai Direct** - Vision, streaming, tools
+- **NVIDIA NIM** - Vision, streaming, tools
+- **OpenRouter** - Vision, streaming, tools (aggregates many models)
+- **DeepSeek** - Text-only, streaming, tools (cost-effective)
+
+### Local Providers
+- **LM Studio** - Vision, streaming, tools (localhost:1234)
+- **llama.cpp** - Text-only, streaming (localhost:8080)
+- **Ollama** - Vision, streaming, tools (localhost:11434)
+
+## Model Routing
+
+The proxy automatically routes models to optimal providers based on tier:
+
+- **Opus Tier** (claude-3-opus, gpt-4) → GLM → NVIDIA NIM → OpenRouter
+- **Sonnet Tier** (claude-3-sonnet, gpt-4o) → GLM → NVIDIA NIM → MiniMax
+- **Haiku Tier** (claude-3-haiku, gpt-4o-mini) → MiniMax → GLM → DeepSeek
+
+Override routing with `X-Provider` header.
+
 ## Endpoints
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/health` | Health check |
-| GET | `/` | API info |
-| POST | `/v1/chat/completions` | Chat completion proxy (OpenAI) |
-| POST | `/v1/messages` | Messages proxy (Anthropic) |
-| GET | `/v1/providers` | List providers |
-| GET | `/v1/models` | List models |
-| GET | `/v1/health/:provider` | Check provider status |
+| GET | `/` | API info and features |
+| POST | `/v1/chat/completions` | Chat completion proxy (OpenAI format) |
+| POST | `/v1/messages` | Messages proxy (Anthropic format) |
+| GET | `/v1/providers` | List all configured providers |
+| GET | `/v1/models` | List available models |
+| GET | `/v1/health/:provider` | Check specific provider status |
 
-## Claude Code / OpenCode Setup
+## Claude Code Setup
 
-For Claude Code with Z.ai Coding Plan, configure your AI client's settings:
+Configure Claude Code to use this proxy:
 
 ```json
 {
   "env": {
-    "ANTHROPIC_AUTH_TOKEN": "your-zai-api-key",
+    "ANTHROPIC_AUTH_TOKEN": "your-proxy-api-key",
     "ANTHROPIC_BASE_URL": "http://localhost:3000",
     "ANTHROPIC_DEFAULT_OPUS_MODEL": "glm-5.1",
     "ANTHROPIC_DEFAULT_SONNET_MODEL": "glm-5-turbo",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "glm-4-air"
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "glm-4-flash"
   }
 }
 ```
 
-Or use direct Z.ai endpoint (no proxy):
+The proxy will automatically route requests to the best available provider based on the model tier.
 
-```json
-{
-  "env": {
-    "ANTHROPIC_AUTH_TOKEN": "your-zai-api-key",
-    "ANTHROPIC_BASE_URL": "https://api.z.ai/api/anthropic",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL": "glm-5.1"
-  }
-}
+## Architecture
+
+Inspired by free-claude-code with modular Node.js architecture:
+
+```
+src/
+├── api/              # API routes and service layer
+│   └── chatRoutes.js # Chat completion endpoints
+├── core/             # Shared protocol helpers
+│   ├── anthropicProtocol.js  # Anthropic format utilities
+│   └── sseHelper.js         # SSE streaming support
+├── providers/        # Provider management
+│   └── providerRegistry.js  # Provider registry and routing
+├── config/           # Configuration
+│   ├── providerCatalog.js   # Provider metadata
+│   └── modelRouter.js       # Per-model routing
+├── middleware/       # Express middleware
+│   ├── auth.js              # API key validation
+│   ├── mediaHandler.js      # Vision/image handling
+│   └── rateLimit.js         # Rate limiting
+└── lib/              # Utilities
+    └── logger.js            # Logging system
 ```
 
 ## Logging
@@ -209,3 +302,7 @@ Logs are written to `logs/` directory:
 ## License
 
 MIT
+
+## Inspired By
+
+This project is inspired by [free-claude-code](https://github.com/Alishahryar1/free-claude-code), adapted to Node.js with additional provider support and modular architecture.

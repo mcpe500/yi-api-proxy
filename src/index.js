@@ -1,6 +1,7 @@
 /**
- * Yi API Proxy - Lightweight API routing proxy
- * Supports: GLM (Z.ai), Z.ai, MiniMax
+ * Yi API Proxy - Modular AI API Proxy
+ * Inspired by free-claude-code architecture
+ * Supports: GLM, Z.ai, MiniMax, NVIDIA NIM, OpenRouter, DeepSeek, LM Studio, llama.cpp, Ollama
  */
 
 import express from 'express';
@@ -11,6 +12,9 @@ import { readFileSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { log, logRequest, logError } from './lib/logger.js';
+import { validateApiKey } from './middleware/auth.js';
+import { rateLimit } from './middleware/rateLimit.js';
+import chatRoutes from './api/chatRoutes.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -114,14 +118,25 @@ app.get('/ready', (req, res) => {
 app.get('/', (req, res) => {
   res.json({
     name: 'Yi API Proxy',
-    version: '1.0.0',
+    version: '2.0.0',
+    description: 'Modular AI API Proxy with multi-provider support and per-model routing',
     endpoints: {
       chat: 'POST /v1/chat/completions',
+      messages: 'POST /v1/messages',
       models: 'GET /v1/models',
       providers: 'GET /v1/providers',
       health: 'GET /health',
       ready: 'GET /ready'
     },
+    features: [
+      'Multi-provider routing (GLM, Z.ai, MiniMax, NVIDIA NIM, OpenRouter, DeepSeek, LM Studio, llama.cpp, Ollama)',
+      'Per-model routing (Opus, Sonnet, Haiku tiers)',
+      'Automatic fallback between providers',
+      'Vision support with automatic fallback',
+      'Streaming support',
+      'Tool use support',
+      'Thinking/reasoning block handling'
+    ],
     providers: Object.entries(config.providers).map(([key, cfg]) => ({
       name: key,
       displayName: cfg.name,
@@ -135,10 +150,11 @@ app.get('/', (req, res) => {
   });
 });
 
-// Import and use routes
-import proxyRouter from './routes/proxy.js';
+// Apply auth and rate limiting to /v1 routes
+app.use('/v1', validateApiKey, rateLimit);
 
-app.use('/v1', proxyRouter);
+// Use chat routes
+app.use('/v1', chatRoutes);
 
 // 404 handler
 app.use((req, res) => {
@@ -180,7 +196,7 @@ app.listen(PORT, HOST, () => {
     }
   }
 
-  console.log('\n🚀 Yi API Proxy');
+  console.log('\n🚀 Yi API Proxy v2.0');
   console.log(`   Server: http://localhost:${PORT}`);
   console.log(`   Health: http://localhost:${PORT}/health`);
   console.log(`   Logs:   logs/yi-api.${new Date().toISOString().slice(0, 10).replace(/-/g, '')}.log`);
@@ -197,8 +213,10 @@ app.listen(PORT, HOST, () => {
   console.log('\n📖 Usage:');
   console.log('   POST /v1/chat/completions');
   console.log('   Header: X-API-Key: your-key');
-  console.log('   Header: X-Provider: glm|zai|minimax (auto-detect if omitted)');
-  console.log('   Body: OpenAI-compatible format\n');
+  console.log('   Header: X-Provider: glm|zai|minimax|nvidia_nim|openrouter|deepseek (auto-detect if omitted)');
+  console.log('   Body: OpenAI-compatible format');
+  console.log('\n🎯 Model Routing:', config.enableModelRouting !== false ? 'Enabled (Opus/Sonnet/Haiku tiers)' : 'Disabled');
+  console.log('   Use X-Provider header to override routing\n');
 });
 
 export default app;

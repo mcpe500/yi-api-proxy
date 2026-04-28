@@ -46,7 +46,10 @@ export function validateApiKey(apiKey, provider) {
   const patterns = {
     glm: /^[a-zA-Z0-9._-]{30,60}$/,
     zai: /^[a-zA-Z0-9._-]{30,60}$/,
-    minimax: /^sk-cp-[a-zA-Z0-9_-]{40,}$/
+    minimax: /^sk-cp-[a-zA-Z0-9_-]{40,}$/,
+    nvidia_nim: /^nvapi-[a-zA-Z0-9_-]{30,}$/,
+    openrouter: /^sk-or-v1-[a-zA-Z0-9_-]{40,}$/,
+    deepseek: /^sk-[a-zA-Z0-9_-]{40,}$/
   };
 
   const pattern = patterns[provider];
@@ -73,8 +76,8 @@ export function generateApiKey(prefix = 'sk-yi-proxy') {
 const PROVIDER_CONFIGS = {
   glm: {
     name: 'GLM (Z.ai)',
-    baseUrl: 'https://api.z.ai/api/anthropic',
-    endpoint: '/v1/messages',
+    baseUrl: 'https://api.z.ai/api/coding/paas/v4',
+    endpoint: '/chat/completions',
     authType: 'bearer'
   },
   minimax: {
@@ -88,6 +91,42 @@ const PROVIDER_CONFIGS = {
     baseUrl: 'https://api.z.ai/v1',
     endpoint: '/chat/completions',
     authType: 'bearer'
+  },
+  nvidia_nim: {
+    name: 'NVIDIA NIM',
+    baseUrl: 'https://integrate.api.nvidia.com/v1',
+    endpoint: '/chat/completions',
+    authType: 'bearer'
+  },
+  openrouter: {
+    name: 'OpenRouter',
+    baseUrl: 'https://openrouter.ai/api/v1',
+    endpoint: '/chat/completions',
+    authType: 'bearer'
+  },
+  deepseek: {
+    name: 'DeepSeek',
+    baseUrl: 'https://api.deepseek.com/v1',
+    endpoint: '/chat/completions',
+    authType: 'bearer'
+  },
+  lm_studio: {
+    name: 'LM Studio (Local)',
+    baseUrl: 'http://localhost:1234/v1',
+    endpoint: '/chat/completions',
+    authType: 'bearer'
+  },
+  llama_cpp: {
+    name: 'llama.cpp (Local)',
+    baseUrl: 'http://localhost:8080/v1',
+    endpoint: '/chat/completions',
+    authType: 'bearer'
+  },
+  ollama: {
+    name: 'Ollama (Local)',
+    baseUrl: 'http://localhost:11434/v1',
+    endpoint: '/chat/completions',
+    authType: 'bearer'
   }
 };
 
@@ -99,18 +138,30 @@ export async function testProvider(provider, apiKey) {
 
   const url = config.baseUrl + config.endpoint;
   const headers = {
-    'Content-Type': 'application/json',
-    'anthropic-version': '2023-06-01'
+    'Content-Type': 'application/json'
   };
 
   if (config.authType === 'bearer') {
     headers['Authorization'] = `Bearer ${apiKey}`;
   } else if (config.authType === 'x-api-key') {
     headers['x-api-key'] = apiKey;
+    headers['anthropic-version'] = '2023-06-01';
   }
 
+  const modelMap = {
+    glm: 'glm-4.7',
+    minimax: 'MiniMax-M2.7',
+    zai: 'glm-4.7',
+    nvidia_nim: 'nvidia_nim/z-ai/glm4.7',
+    openrouter: 'anthropic/claude-3.5-sonnet',
+    deepseek: 'deepseek-chat',
+    lm_studio: 'local-model',
+    llama_cpp: 'local-model',
+    ollama: 'llama3'
+  };
+
   const body = {
-    model: provider === 'glm' ? 'glm-4.7' : (provider === 'minimax' ? 'MiniMax-M2.7' : 'glm-4.7'),
+    model: modelMap[provider] || 'glm-4.7',
     messages: [{ role: 'user', content: 'test' }],
     max_tokens: 1
   };
