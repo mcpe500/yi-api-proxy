@@ -8,14 +8,14 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import crypto from 'crypto';
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, readdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { log, logRequest, logError } from './lib/logger.js';
 import { validateApiKey } from './middleware/auth.js';
 import { rateLimit } from './middleware/rateLimit.js';
 import chatRoutes from './api/chatRoutes.js';
-import { readConfig, writeConfig } from '../setup/configWriter.js';
+import { readConfig, writeConfigAtomic } from '../setup/configWriter.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -115,9 +115,9 @@ app.get('/ready', (req, res) => {
   });
 });
 
-// Info endpoint
-app.get('/', (req, res) => {
-  res.json({
+// Build root info response (shared by / and /api/)
+function buildInfoResponse(req) {
+  return {
     name: 'Yi API Proxy',
     version: '2.0.0',
     description: 'Modular AI API Proxy with multi-provider support and per-model routing',
@@ -150,7 +150,31 @@ app.get('/', (req, res) => {
       capabilities: cfg.capabilities || []
     })),
     requestId: req.requestId
-  });
+  };
+}
+
+// Info endpoint
+app.get('/', (req, res) => {
+  res.json(buildInfoResponse(req));
+});
+
+// Dashboard alias for info endpoint (no auth)
+app.get('/api/', (req, res) => {
+  res.json(buildInfoResponse(req));
+});
+
+// Dashboard alias for providers list (no auth)
+app.get('/api/v1/providers', (req, res) => {
+  const providers = {};
+  for (const [name, providerConfig] of Object.entries(config.providers || {})) {
+    providers[name] = {
+      name,
+      displayName: providerConfig.name || name,
+      hasApiKey: !!(providerConfig.apiKey && !providerConfig.apiKey.startsWith('YOUR_')),
+      models: providerConfig.models || []
+    };
+  }
+  res.json(providers);
 });
 
 // Apply auth and rate limiting to /v1 routes
@@ -180,7 +204,7 @@ app.get('/api/config', (req, res) => {
 
 app.post('/api/config', (req, res) => {
   try {
-    writeConfig(req.body);
+    writeConfigAtomic(req.body);
     res.json({ success: true });
     // Reload config
     global.config = readConfig();
@@ -192,21 +216,20 @@ app.post('/api/config', (req, res) => {
 app.get('/api/logs', (req, res) => {
   try {
     const logsDir = join(__dirname, '..', 'logs');
-    const fs = require('fs');
-    if (!fs.existsSync(logsDir)) {
+    if (!existsSync(logsDir)) {
       return res.json([]);
     }
-    const files = fs.readdirSync(logsDir).filter(f => f.endsWith('.log')).slice(-3);
+    const files = readdirSync(logsDir).filter(f => f.endsWith('.log')).slice(-3);
     const allLogs = [];
     files.forEach(file => {
       const logPath = join(logsDir, file);
-      const content = fs.readFileSync(logPath, 'utf-8');
+      const content = readFileSync(logPath, 'utf-8');
       const lines = content.split('\n').filter(Boolean).slice(-50);
       lines.forEach(line => {
         try {
           const parsed = JSON.parse(line);
           allLogs.push({
-            time: parsed.time || new Date().toISOString(),
+            time: parsed.timestamp || new Date().toISOString(),
             level: parsed.level || 'info',
             message: parsed.msg || line
           });

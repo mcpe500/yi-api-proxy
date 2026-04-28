@@ -6,6 +6,7 @@
 import express from 'express';
 import { ProviderRegistry } from '../providers/providerRegistry.js';
 import { ModelRouter } from '../config/modelRouter.js';
+import { getProviderInfo } from '../config/providerCatalog.js';
 import { openaiToAnthropic, anthropicToOpenai, mergeSystemMessages, removeThinkingBlocks } from '../core/anthropicProtocol.js';
 import { processSSEStream, anthropicToOpenaiChunk } from '../core/sseHelper.js';
 import { hasImages, processImages } from '../middleware/mediaHandler.js';
@@ -397,22 +398,23 @@ async function handleListModels(req, res) {
  */
 async function handleListProviders(req, res) {
   const config = global.config;
-  const registry = new ProviderRegistry(config);
-  
-  const providers = [];
-  
-  for (const provider of registry.providers.values()) {
-    providers.push({
-      name: provider.name,
-      displayName: provider.config.name || provider.info.name,
-      description: provider.config.description || provider.info.description,
-      type: provider.type,
-      capabilities: provider.capabilities,
-      models: provider.config.models || provider.info.defaultModels || []
-    });
+
+  const providers = {};
+
+  for (const [name, providerConfig] of Object.entries(config.providers || {})) {
+    const info = getProviderInfo(name) || {};
+    providers[name] = {
+      name,
+      displayName: providerConfig.name || info.name || name,
+      description: providerConfig.description || info.description,
+      type: providerConfig.type || info.type || 'openai',
+      capabilities: providerConfig.capabilities || info.capabilities || [],
+      models: providerConfig.models || info.defaultModels || [],
+      hasApiKey: !!(providerConfig.apiKey && !providerConfig.apiKey.startsWith('YOUR_'))
+    };
   }
-  
-  res.json({ providers });
+
+  res.json(providers);
 }
 
 /**

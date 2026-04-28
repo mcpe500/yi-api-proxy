@@ -106,6 +106,13 @@
                 const providers = await providersRes.json();
                 const info = await infoRes.json();
 
+                if (typeof providers !== 'object' || providers === null || Array.isArray(providers)) {
+                    throw new Error('Invalid providers response format');
+                }
+                if (!info || !info.endpoints) {
+                    throw new Error('Invalid server info response format');
+                }
+
                 const statusHtml = Object.entries(providers).map(([name, p]) => `
                     <div class="status-item">
                         <h3>${p.name || name}</h3>
@@ -164,6 +171,9 @@
             try {
                 const res = await fetch(API_BASE + '/logs');
                 const logs = await res.json();
+                if (!Array.isArray(logs)) {
+                    throw new Error('Invalid response format');
+                }
                 const logsHtml = logs.map(log => `
                     <div class="log-entry ${log.level}">
                         [${log.time}] ${log.level}: ${log.message}
