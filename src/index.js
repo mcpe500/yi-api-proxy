@@ -15,6 +15,7 @@ import { log, logRequest, logError } from './lib/logger.js';
 import { validateApiKey } from './middleware/auth.js';
 import { rateLimit } from './middleware/rateLimit.js';
 import chatRoutes from './api/chatRoutes.js';
+import { readConfig, writeConfig } from '../setup/configWriter.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -126,7 +127,8 @@ app.get('/', (req, res) => {
       models: 'GET /v1/models',
       providers: 'GET /v1/providers',
       health: 'GET /health',
-      ready: 'GET /ready'
+      ready: 'GET /ready',
+      dashboard: 'GET /dashboard'
     },
     features: [
       'Multi-provider routing (GLM, Z.ai, MiniMax, NVIDIA NIM, OpenRouter, DeepSeek, LM Studio, llama.cpp, Ollama)',
@@ -135,7 +137,8 @@ app.get('/', (req, res) => {
       'Vision support with automatic fallback',
       'Streaming support',
       'Tool use support',
-      'Thinking/reasoning block handling'
+      'Thinking/reasoning block handling',
+      'Web dashboard for monitoring and configuration'
     ],
     providers: Object.entries(config.providers).map(([key, cfg]) => ({
       name: key,
@@ -155,6 +158,75 @@ app.use('/v1', validateApiKey, rateLimit);
 
 // Use chat routes
 app.use('/v1', chatRoutes);
+
+// Dashboard API endpoints (no auth required for simplicity)
+app.get('/api/config', (req, res) => {
+  try {
+    const currentConfig = readConfig();
+    // Remove sensitive data
+    const safeConfig = { ...currentConfig };
+    if (safeConfig.providers) {
+      Object.keys(safeConfig.providers).forEach(key => {
+        if (safeConfig.providers[key].apiKey) {
+          safeConfig.providers[key].apiKey = safeConfig.providers[key].apiKey.substring(0, 10) + '***';
+        }
+      });
+    }
+    res.json(safeConfig);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/config', (req, res) => {
+  try {
+    writeConfig(req.body);
+    res.json({ success: true });
+    // Reload config
+    global.config = readConfig();
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/logs', (req, res) => {
+  try {
+    const logsDir = join(__dirname, '..', 'logs');
+    const fs = require('fs');
+    if (!fs.existsSync(logsDir)) {
+      return res.json([]);
+    }
+    const files = fs.readdirSync(logsDir).filter(f => f.endsWith('.log')).slice(-3);
+    const allLogs = [];
+    files.forEach(file => {
+      const logPath = join(logsDir, file);
+      const content = fs.readFileSync(logPath, 'utf-8');
+      const lines = content.split('\n').filter(Boolean).slice(-50);
+      lines.forEach(line => {
+        try {
+          const parsed = JSON.parse(line);
+          allLogs.push({
+            time: parsed.time || new Date().toISOString(),
+            level: parsed.level || 'info',
+            message: parsed.msg || line
+          });
+        } catch {
+          allLogs.push({
+            time: new Date().toISOString(),
+            level: 'info',
+            message: line
+          });
+        }
+      });
+    });
+    res.json(allLogs.slice(-100));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Serve static dashboard
+app.use('/dashboard', express.static(join(__dirname, '..', 'dashboard')));
 
 // 404 handler
 app.use((req, res) => {

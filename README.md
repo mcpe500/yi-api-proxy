@@ -14,6 +14,7 @@ Modular AI API Proxy inspired by free-claude-code architecture. Supports multipl
 - **Security**: API key validation and rate limiting
 - **Interactive Setup**: Wizard CLI for easy configuration
 - **File Logging**: JSON-structured logs for requests and providers
+- **Web Dashboard**: Lightweight HTML/CSS/JS dashboard for monitoring and configuration
 
 ## Quick Start
 
@@ -249,6 +250,10 @@ Override routing with `X-Provider` header.
 | GET | `/v1/providers` | List all configured providers |
 | GET | `/v1/models` | List available models |
 | GET | `/v1/health/:provider` | Check specific provider status |
+| GET | `/dashboard` | Web dashboard (HTML) |
+| GET | `/api/config` | Get current configuration (API) |
+| POST | `/api/config` | Update configuration (API) |
+| GET | `/api/logs` | Get recent logs (API) |
 
 ## Claude Code Setup
 
@@ -267,6 +272,18 @@ Configure Claude Code to use this proxy:
 ```
 
 The proxy will automatically route requests to the best available provider based on the model tier.
+
+## Web Dashboard
+
+Access the lightweight web dashboard at `http://localhost:3000/dashboard`
+
+**Dashboard Features:**
+- **Provider Status**: View all configured providers and their status
+- **Configuration Editor**: Edit config.json directly through the web UI
+- **Logs Viewer**: View recent request and provider logs
+- **Server Info**: View API endpoints and features
+
+The dashboard is built with plain HTML/CSS/JavaScript - no build step required, lightweight and fast.
 
 ## Architecture
 
