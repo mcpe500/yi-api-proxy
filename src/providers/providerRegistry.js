@@ -136,12 +136,7 @@ export class Provider {
     
     // Provider-specific adjustments
     if (this.type === 'anthropic') {
-      // Anthropic format adjustments
-      if (providerBody.messages && !providerBody.content) {
-        // Convert messages to content array
-        providerBody.content = providerBody.messages;
-        delete providerBody.messages;
-      }
+      // Anthropic Messages API already uses "messages" field — pass through as-is
     }
     
     return providerBody;
