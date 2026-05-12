@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GoRouter Chat</title>
+    <style>
+        :root {
+            --bg: #1a1a2e;
+            --surface: #16213e;
+            --surface2: #0f3460;
+            --border: #253a5e;
+            --text: #e0e0e0;
+            --text2: #8892a8;
+            --primary: #4a9eff;
+            --danger: #e74c3c;
+            --success: #2ecc71;
+            --radius: 8px;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        .chat-header {
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+            padding: 12px 24px;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+        .chat-header h1 {
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--primary);
+            margin-right: auto;
+        }
+        .header-field {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 13px;
+        }
+        .header-field label {
+            color: var(--text2);
+            font-weight: 500;
+        }
+        .header-field input, .header-field select {
+            padding: 6px 10px;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text);
+            font-size: 13px;
+        }
+        .header-field input:focus, .header-field select:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+        #api-key-input { width: 200px; }
+        #model-select { min-width: 180px; }
+
+        .messages-area {
+            flex: 1;
+            overflow-y: auto;
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .msg {
+            max-width: 80%;
+            padding: 12px 16px;
+            border-radius: var(--radius);
+            line-height: 1.6;
+            white-space: pre-wrap;
+            word-break: break-word;
+            font-size: 14px;
+        }
+        .msg-user {
+            align-self: flex-end;
+            background: var(--surface2);
+            color: var(--text);
+        }
+        .msg-assistant {
+            align-self: flex-start;
+            background: var(--surface);
+            border: 1px solid var(--border);
+        }
+        .msg-error {
+            align-self: center;
+            background: rgba(231, 76, 60, 0.15);
+            color: var(--danger);
+            border: 1px solid rgba(231, 76, 60, 0.3);
+            max-width: 90%;
+            text-align: center;
+        }
+        .msg-typing {
+            color: var(--text2);
+            font-style: italic;
+        }
+
+        .input-area {
+            background: var(--surface);
+            border-top: 1px solid var(--border);
+            padding: 16px 24px;
+            display: flex;
+            gap: 12px;
+            align-items: flex-end;
+        }
+        .input-area textarea {
+            flex: 1;
+            padding: 10px 14px;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text);
+            font-size: 14px;
+            font-family: inherit;
+            resize: none;
+            min-height: 48px;
+            max-height: 200px;
+        }
+        .input-area textarea:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+        .send-btn {
+            padding: 10px 24px;
+            background: var(--primary);
+            color: #fff;
+            border: none;
+            border-radius: var(--radius);
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            white-space: nowrap;
+        }
+        .send-btn:hover { opacity: 0.85; }
+        .send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+        .token-bar {
+            background: var(--surface);
+            border-top: 1px solid var(--border);
+            padding: 8px 24px;
+            font-size: 12px;
+            color: var(--text2);
+            display: flex;
+            gap: 24px;
+        }
+        .token-bar span { color: var(--text); font-weight: 500; }
+        .token-bar .hidden { display: none; }
+
+        @media (max-width: 640px) {
+            .chat-header { padding: 10px 12px; gap: 8px; }
+            .header-field { flex: 1 1 100%; }
+            #api-key-input { width: 100%; }
+            .messages-area { padding: 12px; }
+            .msg { max-width: 95%; }
+            .input-area { padding: 12px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="chat-header">
+        <h1>GoRouter Chat</h1>
+        <div class="header-field">
+            <label for="api-key-input">API Key</label>
+            <input type="password" id="api-key-input" placeholder="sk-...">
+        </div>
+        <div class="header-field">
+            <label for="model-select">Model</label>
+            <select id="model-select">
+                <option value="gpt-4o-mini">gpt-4o-mini</option>
+                <option value="gpt-4o">gpt-4o</option>
+                <option value="gpt-4-turbo">gpt-4-turbo</option>
+                <option value="claude-3-5-sonnet-20241022">claude-3-5-sonnet</option>
+                <option value="deepseek-chat">deepseek-chat</option>
+                <option value="Qwen/Qwen2.5-72B-Instruct">Qwen2.5-72B</option>
+            </select>
+        </div>
+        <div class="header-field">
+            <label><input type="checkbox" id="stream-toggle" checked> Stream</label>
+        </div>
+    </div>
+
+    <div class="messages-area" id="messages"></div>
+
+    <div class="input-area">
+        <textarea id="msg-input" placeholder="Type a message... (Enter to send, Shift+Enter for newline)" rows="1"></textarea>
+        <button class="send-btn" id="send-btn">Send</button>
+    </div>
+
+    <div class="token-bar hidden" id="token-bar">
+        <div>Prompt: <span id="tok-prompt">0</span></div>
+        <div>Completion: <span id="tok-completion">0</span></div>
+        <div>Total: <span id="tok-total">0</span></div>
+    </div>
+
+    <script src="chat.js"></script>
+</body>
+</html>

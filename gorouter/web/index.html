@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GoRouter Admin Panel</title>
+    <link rel="stylesheet" href="admin.css">
+</head>
+<body>
+    <div id="toast-container"></div>
+
+    <div id="login-page" class="page">
+        <div class="login-card">
+            <div class="login-logo">GoRouter</div>
+            <h2>Admin Panel</h2>
+            <form id="login-form">
+                <div class="form-group">
+                    <label for="login-email">Email</label>
+                    <input type="email" id="login-email" placeholder="admin@example.com" required>
+                </div>
+                <div class="form-group">
+                    <label for="login-password">Password</label>
+                    <input type="password" id="login-password" placeholder="Password" required>
+                </div>
+                <button type="submit" class="btn btn-primary btn-block" id="login-btn">Login</button>
+                <div id="login-error" class="error-msg hidden"></div>
+            </form>
+        </div>
+    </div>
+
+    <div id="admin-page" class="page hidden">
+        <aside id="sidebar">
+            <div class="sidebar-header">
+                <span class="sidebar-brand">GoRouter</span>
+            </div>
+            <nav class="sidebar-nav">
+                <a href="#/dashboard" class="nav-link active" data-route="dashboard">
+                    <span class="nav-icon">&#9632;</span> Dashboard
+                </a>
+                <a href="#/users" class="nav-link" data-route="users">
+                    <span class="nav-icon">&#9775;</span> Users
+                </a>
+                <a href="#/apikeys" class="nav-link" data-route="apikeys">
+                    <span class="nav-icon">&#9919;</span> API Keys
+                </a>
+                <a href="#/providers" class="nav-link" data-route="providers">
+                    <span class="nav-icon">&#9881;</span> Providers
+                </a>
+                <a href="#/models" class="nav-link" data-route="models">
+                    <span class="nav-icon">&#9881;</span> Models
+                </a>
+                <a href="#/usage" class="nav-link" data-route="usage">
+                    <span class="nav-icon">&#9733;</span> Usage
+                </a>
+            </nav>
+            <div class="sidebar-footer">
+                <div class="user-info">
+                    <span id="user-email"></span>
+                </div>
+                <button id="logout-btn" class="btn btn-ghost">Logout</button>
+            </div>
+        </aside>
+
+        <main id="main-content">
+            <div id="section-dashboard" class="section">
+                <h2 class="page-title">Dashboard</h2>
+                <div class="stats-grid" id="stats-cards"></div>
+                <div class="card mt-lg">
+                    <h3 class="card-title">Recent Activity</h3>
+                    <div class="table-wrap">
+                        <table id="activity-table">
+                            <thead>
+                                <tr><th>Time</th><th>User</th><th>Model</th><th>Provider</th><th>Status</th><th>Tokens</th><th>Cost</th><th>Latency</th></tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div id="section-users" class="section hidden">
+                <div class="section-header">
+                    <h2 class="page-title">User Management</h2>
+                    <button class="btn btn-primary" id="btn-add-user">+ Add User</button>
+                </div>
+                <div class="card">
+                    <div class="table-wrap">
+                        <table id="users-table">
+                            <thead><tr><th>Email</th><th>Name</th><th>Role</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div id="section-apikeys" class="section hidden">
+                <div class="section-header">
+                    <h2 class="page-title">API Key Management</h2>
+                    <button class="btn btn-primary" id="btn-add-apikey">+ Create Key</button>
+                </div>
+                <div class="card">
+                    <div class="table-wrap">
+                        <table id="apikeys-table">
+                            <thead><tr><th>Name</th><th>User</th><th>Prefix</th><th>Scopes</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div id="section-providers" class="section hidden">
+                <div class="section-header">
+                    <h2 class="page-title">Provider Configuration</h2>
+                    <button class="btn btn-primary" id="btn-add-provider">+ Add Provider</button>
+                </div>
+                <div class="card">
+                    <div class="table-wrap">
+                        <table id="providers-table">
+                            <thead><tr><th>Name</th><th>Provider</th><th>Base URL</th><th>Priority</th><th>Status</th><th>Actions</th></tr></thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div id="section-models" class="section hidden">
+                <div class="section-header">
+                    <h2 class="page-title">Model Management</h2>
+                    <button class="btn btn-primary" id="btn-add-model">+ Add Model</button>
+                </div>
+                <div class="card">
+                    <div class="table-wrap">
+                        <table id="models-table">
+                            <thead><tr><th>Display Name</th><th>Model ID</th><th>Provider</th><th>Context</th><th>Enabled</th><th>Stream</th><th>Actions</th></tr></thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div id="section-usage" class="section hidden">
+                <h2 class="page-title">Usage Analytics</h2>
+                <div class="stats-grid" id="usage-stats"></div>
+                <div class="card mt-lg">
+                    <h3 class="card-title">Usage Chart</h3>
+                    <div class="chart-container">
+                        <canvas id="usage-chart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <div id="modal-overlay" class="modal-overlay hidden">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 id="modal-title">Modal</h3>
+                <button class="modal-close" id="modal-close-btn">&times;</button>
+            </div>
+            <div class="modal-body" id="modal-body"></div>
+        </div>
+    </div>
+
+    <script src="admin.js"></script>
+</body>
+</html>
