@@ -55,28 +55,42 @@ type ComboItem struct {
 - If can refresh token → retry once
 - If different account available → try that account
 
-## Account Selection
+## Combo Execution Flow
 
-```go
-GetActiveAccounts(provider, excludeIDs):
-  accounts = providers.GetByProvider(provider)
-  return accounts.Filter(a =>
-    a.Status == "active" AND
-    (a.CooldownUntil == nil OR a.CooldownUntil < now) AND
-    a.ID NOT IN excludeIDs
-  ).Sort(by priority ASC)
+When a combo is resolved:
+
+```
+1. Load combo items ordered by priority
+2. For each item:
+   a. Find provider via ProviderRepository.FindByID
+   b. Get adapter from registry by provider name
+   c. adapter.TranslateRequest() → provider-specific request
+   d. Execute HTTP request upstream
+   e. adapter.ParseResponse() → NormalizedChatResponse
+   f. On success → clear cooldown, return response
+   g. On error (429, 5xx) → mark cooldown, continue to next item
+3. Return response from first successful provider
 ```
 
 ## Cooldown Mechanism
 
 ```go
-// On error
-cooldown = min(baseCooldown * (2 ^ backoffLevel), 300000)
-providers.MarkCooldown(accountID, cooldown, errorText)
+// On error (429, 5xx)
+provider.MarkCooldown(id, until, errorMsg)
+// Status → "cooldown", sets CooldownUntil, LastError
 
 // On success
-providers.ClearCooldown(accountID)
+provider.ClearCooldown(id)
+// Status → "active", clears all error state
 ```
+
+## Account Selection (Implemented)
+
+Account selection uses `ProviderRepository.FindByProvider` and filters by:
+- `Status == "active"`
+- `CooldownUntil == nil OR CooldownUntil < now`
+
+Fallback candidates are sorted by `Priority` DESC.
 
 ## Related Specs
 

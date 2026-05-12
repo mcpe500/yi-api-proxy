@@ -28,27 +28,33 @@ type DatabaseManager interface {
     UsageEvents() UsageRepository
     AuditLogs() AuditRepository
     Settings() SettingsRepository
+    RateLimits() RateLimitRepository
+    Quotas() QuotaRepository
 }
 ```
 
 ## Drivers
 
-### JSON Driver
+### JSON Driver - IMPLEMENTED (`internal/db/dbmanager.go`)
 - Single file persistence: `gorouter.json`
 - In-memory map + file sync
 - Zero external dependencies
+- Quotas repo returns nil (stub)
 - Good for: testing, single-user
 
-### SQLite Driver
+### SQLite Driver - IMPLEMENTED (`internal/db/sqlite.go`)
 - modernc.org/sqlite (pure Go, no CGO)
 - Single file: `gorouter.db`
-- Production-ready for self-host
-- Good for: small team, single-node
+- Schema migration on startup via `Migrate()`
+- Tables: users, api_keys, providers, models, combos, combo_items, usage_events, audit_logs, settings, quotas, rate_limits
+- Single-writer mode (MaxOpenConns=1)
+- Full repository implementations for all 11 tables
+- Good for: self-host, small team, single-node
 
-### PostgreSQL Driver
-- lib/pq driver
-- Full ACID, concurrent access
-- Good for: multi-user, HA
+### PostgreSQL Driver - STUB (`internal/db/dbmanager.go`)
+- All methods return nil
+- Not yet implemented
+- Planned: lib/pq driver, full ACID, concurrent access
 
 ## Config
 
@@ -72,4 +78,6 @@ GOROUTER_DATABASE_DSN=postgres://user:pass@localhost/gorouter?sslmode=disable
 
 ## Implementation
 
-See `internal/db/dbmanager.go` in gorouter codebase.
+- JSON driver: `internal/db/dbmanager.go`
+- SQLite driver: `internal/db/sqlite.go`
+- Types/interfaces: `internal/db/dbmanager.go`

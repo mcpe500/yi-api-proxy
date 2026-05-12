@@ -38,3 +38,5 @@ Saved query answers live in `syntheses/`.
 
 ## Handoffs
 - [Handoff 001: Full Implementation](../spec/handoff/001.full-implementation.md) - All 17 specs implemented
+- [Handoff 002: Adapter System + Routing](../spec/handoff/002.adapter-system-routing.md) - Adapter system, SQLite, real routing, usage recording
+- [Handoff 003: Aliases, Audit Logging, Compat](../spec/handoff/003.aliases-audit-compat.md) - Model aliases, audit auto-logging, compatibility endpoints

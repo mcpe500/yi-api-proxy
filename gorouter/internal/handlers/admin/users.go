@@ -3,22 +3,26 @@ package admin
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/gorouter/gorouter/internal/audit"
 	"github.com/gorouter/gorouter/internal/auth"
 	"github.com/gorouter/gorouter/internal/db"
+	"github.com/gorouter/gorouter/internal/middleware"
 )
 
 type UserHandler struct {
-	db db.DatabaseManager
+	db          db.DatabaseManager
+	auditLogger *audit.AuditLogger
 }
 
-func NewUserHandler(dbManager db.DatabaseManager) *UserHandler {
-	return &UserHandler{db: dbManager}
+func NewUserHandler(dbManager db.DatabaseManager, auditLogger *audit.AuditLogger) *UserHandler {
+	return &UserHandler{db: dbManager, auditLogger: auditLogger}
 }
 
 func (h *UserHandler) Routes() chi.Router {
@@ -143,6 +147,8 @@ func (h *UserHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.logAudit(r, "user_created", "user", user.ID, fmt.Sprintf("email=%s", user.Email))
+
 	user.PasswordHash = ""
 	writeJSON(w, http.StatusCreated, user)
 }
@@ -198,6 +204,8 @@ func (h *UserHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.logAudit(r, "user_updated", "user", user.ID, fmt.Sprintf("email=%s", user.Email))
+
 	user.PasswordHash = ""
 	writeJSON(w, http.StatusOK, user)
 }
@@ -221,6 +229,8 @@ func (h *UserHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+
+	h.logAudit(r, "user_deleted", "user", id, fmt.Sprintf("previous_email=%s", user.Email))
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
@@ -260,6 +270,20 @@ func (h *UserHandler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	action := "user_suspended"
+	if req.Status == "active" {
+		action = "user_activated"
+	}
+	h.logAudit(r, action, "user", id, fmt.Sprintf("email=%s status=%s", user.Email, req.Status))
+
 	user.PasswordHash = ""
 	writeJSON(w, http.StatusOK, user)
+}
+
+func (h *UserHandler) logAudit(r *http.Request, action, targetType, targetID, details string) {
+	if h.auditLogger == nil {
+		return
+	}
+	actor := middleware.GetAuditActor(r.Context())
+	h.auditLogger.Log(r.Context(), actor, action, targetType, targetID, details)
 }

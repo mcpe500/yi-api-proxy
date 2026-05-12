@@ -26,6 +26,7 @@ type sqliteDB struct {
 	settings   *sqliteSettingsRepo
 	rateLimits *sqliteRateLimitRepo
 	quotas     *sqliteQuotaRepo
+	aliases    *sqliteAliasRepo
 }
 
 func newSQLiteDriver(dsn string) (DatabaseManager, error) {
@@ -49,6 +50,7 @@ func newSQLiteDriver(dsn string) (DatabaseManager, error) {
 	sdb.settings = &sqliteSettingsRepo{driver: d}
 	sdb.rateLimits = &sqliteRateLimitRepo{driver: d}
 	sdb.quotas = &sqliteQuotaRepo{driver: d}
+	sdb.aliases = &sqliteAliasRepo{driver: d}
 
 	return sdb, nil
 }
@@ -66,6 +68,7 @@ func (s *sqliteDB) AuditLogs() AuditRepository     { return s.audit }
 func (s *sqliteDB) Settings() SettingsRepository   { return s.settings }
 func (s *sqliteDB) RateLimits() RateLimitRepository { return s.rateLimits }
 func (s *sqliteDB) Quotas() QuotaRepository         { return s.quotas }
+func (s *sqliteDB) Aliases() ModelAliasRepository   { return s.aliases }
 
 func (s *sqliteDB) Migrate() error {
 	return s.driver.migrate()
@@ -259,6 +262,19 @@ func (d *sqliteDriver) migrate() error {
 			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_rate_limits_user_id ON rate_limits(user_id)`,
+
+		`CREATE TABLE IF NOT EXISTS model_aliases (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL UNIQUE,
+			target_id TEXT NOT NULL,
+			provider TEXT NOT NULL DEFAULT '',
+			description TEXT NOT NULL DEFAULT '',
+			user_id TEXT NOT NULL DEFAULT '',
+			created_by TEXT NOT NULL DEFAULT '',
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_model_aliases_name ON model_aliases(name)`,
+		`CREATE INDEX IF NOT EXISTS idx_model_aliases_user_id ON model_aliases(user_id)`,
 	}
 
 	tx, err := d.db.BeginTx(ctx, nil)
@@ -286,6 +302,7 @@ type sqliteAuditRepo struct{ driver *sqliteDriver }
 type sqliteSettingsRepo struct{ driver *sqliteDriver }
 type sqliteRateLimitRepo struct{ driver *sqliteDriver }
 type sqliteQuotaRepo struct{ driver *sqliteDriver }
+type sqliteAliasRepo struct{ driver *sqliteDriver }
 
 func (r *sqliteUserRepo) Create(ctx context.Context, user *User) error {
 	_, err := r.driver.db.ExecContext(ctx,
@@ -1237,4 +1254,81 @@ func (r *sqliteQuotaRepo) ResetMonthly(ctx context.Context, userID string) error
 func (r *sqliteQuotaRepo) Delete(ctx context.Context, id string) error {
 	_, err := r.driver.db.ExecContext(ctx, `DELETE FROM quotas WHERE id = ?`, id)
 	return err
+}
+
+func (r *sqliteAliasRepo) Create(ctx context.Context, a *ModelAlias) error {
+	_, err := r.driver.db.ExecContext(ctx,
+		`INSERT INTO model_aliases (id, name, target_id, provider, description, user_id, created_by, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		a.ID, a.Name, a.TargetID, a.Provider, a.Description, a.UserID, a.CreatedBy, a.CreatedAt)
+	return err
+}
+
+func (r *sqliteAliasRepo) FindByID(ctx context.Context, id string) (*ModelAlias, error) {
+	row := r.driver.db.QueryRowContext(ctx,
+		`SELECT id, name, target_id, provider, description, user_id, created_by, created_at
+		 FROM model_aliases WHERE id = ?`, id)
+	return r.scanAlias(row)
+}
+
+func (r *sqliteAliasRepo) FindByName(ctx context.Context, name string) (*ModelAlias, error) {
+	row := r.driver.db.QueryRowContext(ctx,
+		`SELECT id, name, target_id, provider, description, user_id, created_by, created_at
+		 FROM model_aliases WHERE name = ?`, name)
+	return r.scanAlias(row)
+}
+
+func (r *sqliteAliasRepo) FindByUser(ctx context.Context, userID string) ([]*ModelAlias, error) {
+	rows, err := r.driver.db.QueryContext(ctx,
+		`SELECT id, name, target_id, provider, description, user_id, created_by, created_at
+		 FROM model_aliases WHERE user_id = ? ORDER BY name`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return r.scanAliases(rows)
+}
+
+func (r *sqliteAliasRepo) ListGlobal(ctx context.Context) ([]*ModelAlias, error) {
+	rows, err := r.driver.db.QueryContext(ctx,
+		`SELECT id, name, target_id, provider, description, user_id, created_by, created_at
+		 FROM model_aliases WHERE user_id = '' ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return r.scanAliases(rows)
+}
+
+func (r *sqliteAliasRepo) Update(ctx context.Context, a *ModelAlias) error {
+	_, err := r.driver.db.ExecContext(ctx,
+		`UPDATE model_aliases SET name=?, target_id=?, provider=?, description=? WHERE id = ?`,
+		a.Name, a.TargetID, a.Provider, a.Description, a.ID)
+	return err
+}
+
+func (r *sqliteAliasRepo) Delete(ctx context.Context, id string) error {
+	_, err := r.driver.db.ExecContext(ctx, `DELETE FROM model_aliases WHERE id = ?`, id)
+	return err
+}
+
+func (r *sqliteAliasRepo) scanAlias(row *sql.Row) (*ModelAlias, error) {
+	a := &ModelAlias{}
+	err := row.Scan(&a.ID, &a.Name, &a.TargetID, &a.Provider, &a.Description, &a.UserID, &a.CreatedBy, &a.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return a, err
+}
+
+func (r *sqliteAliasRepo) scanAliases(rows *sql.Rows) ([]*ModelAlias, error) {
+	var result []*ModelAlias
+	for rows.Next() {
+		a := &ModelAlias{}
+		if err := rows.Scan(&a.ID, &a.Name, &a.TargetID, &a.Provider, &a.Description, &a.UserID, &a.CreatedBy, &a.CreatedAt); err != nil {
+			return nil, err
+		}
+		result = append(result, a)
+	}
+	return result, nil
 }

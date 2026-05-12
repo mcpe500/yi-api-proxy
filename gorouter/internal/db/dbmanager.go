@@ -26,6 +26,7 @@ type DatabaseManager interface {
 	Settings() SettingsRepository
 	Quotas() QuotaRepository
 	RateLimits() RateLimitRepository
+	Aliases() ModelAliasRepository
 }
 
 func NewDatabaseManager(driver, dsn string) (DatabaseManager, error) {
@@ -147,6 +148,16 @@ type QuotaRepository interface {
 	Update(ctx context.Context, quota *Quota) error
 	IncrementUsage(ctx context.Context, userID string, tokens int64, cost float64) error
 	ResetMonthly(ctx context.Context, userID string) error
+	Delete(ctx context.Context, id string) error
+}
+
+type ModelAliasRepository interface {
+	Create(ctx context.Context, alias *ModelAlias) error
+	FindByID(ctx context.Context, id string) (*ModelAlias, error)
+	FindByName(ctx context.Context, name string) (*ModelAlias, error)
+	FindByUser(ctx context.Context, userID string) ([]*ModelAlias, error)
+	ListGlobal(ctx context.Context) ([]*ModelAlias, error)
+	Update(ctx context.Context, alias *ModelAlias) error
 	Delete(ctx context.Context, id string) error
 }
 
@@ -350,6 +361,17 @@ type Quota struct {
 	UpdatedAt        time.Time `json:"updated_at"`
 }
 
+type ModelAlias struct {
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	TargetID    string    `json:"target_id"`
+	Provider    string    `json:"provider"`
+	Description string    `json:"description,omitempty"`
+	UserID      string    `json:"user_id,omitempty"`
+	CreatedBy   string    `json:"created_by"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
 type jsonDriver struct {
 	mu    sync.RWMutex
 	file  string
@@ -365,6 +387,7 @@ type jsonStore struct {
 	UsageEvents map[string]*UsageEvent         `json:"usage_events,omitempty"`
 	AuditLogs   map[string]*AuditLog           `json:"audit_logs,omitempty"`
 	RateLimits  map[string]*RateLimit          `json:"rate_limits,omitempty"`
+	Aliases     map[string]*ModelAlias         `json:"aliases,omitempty"`
 }
 
 type jsonDB struct {
@@ -378,6 +401,7 @@ type jsonDB struct {
 	audit      *jsonAuditRepo
 	settings   *jsonSettingsRepo
 	rateLimits *jsonRateLimitRepo
+	aliases    *jsonAliasRepo
 }
 
 func newJSONDriver(dsn string) (DatabaseManager, error) {
@@ -402,6 +426,7 @@ func newJSONDriver(dsn string) (DatabaseManager, error) {
 	db.audit = newJsonAuditRepo(j)
 	db.settings = newJsonSettingsRepo(j)
 	db.rateLimits = newJsonRateLimitRepo(j)
+	db.aliases = newJsonAliasRepo(j)
 
 	return db, nil
 }
@@ -421,6 +446,7 @@ func (db *jsonDB) AuditLogs() AuditRepository { return db.audit }
 func (db *jsonDB) Settings() SettingsRepository { return db.settings }
 func (db *jsonDB) RateLimits() RateLimitRepository { return db.rateLimits }
 func (db *jsonDB) Quotas() QuotaRepository          { return nil }
+func (db *jsonDB) Aliases() ModelAliasRepository   { return db.aliases }
 
 func (j *jsonDriver) save() error {
 	j.mu.Lock()
@@ -1219,3 +1245,92 @@ func (p *postgresDriver) AuditLogs() AuditRepository { return nil }
 func (p *postgresDriver) Settings() SettingsRepository { return nil }
 func (p *postgresDriver) RateLimits() RateLimitRepository { return nil }
 func (p *postgresDriver) Quotas() QuotaRepository          { return nil }
+func (p *postgresDriver) Aliases() ModelAliasRepository   { return nil }
+
+type jsonAliasRepo struct {
+	driver *jsonDriver
+}
+
+func newJsonAliasRepo(d *jsonDriver) *jsonAliasRepo { return &jsonAliasRepo{driver: d} }
+
+func (r *jsonAliasRepo) init() {
+	store := r.driver.load()
+	if store.Aliases == nil {
+		store.Aliases = make(map[string]*ModelAlias)
+		r.driver.mu.Lock()
+		r.driver.store.Aliases = store.Aliases
+		r.driver.mu.Unlock()
+	}
+}
+
+func (r *jsonAliasRepo) Create(ctx context.Context, alias *ModelAlias) error {
+	r.init()
+	store := r.driver.load()
+	alias.CreatedAt = time.Now()
+	store.Aliases[alias.ID] = alias
+	r.driver.mu.Lock()
+	r.driver.store.Aliases = store.Aliases
+	r.driver.mu.Unlock()
+	return r.driver.save()
+}
+
+func (r *jsonAliasRepo) FindByID(ctx context.Context, id string) (*ModelAlias, error) {
+	store := r.driver.load()
+	if store.Aliases == nil {
+		return nil, nil
+	}
+	return store.Aliases[id], nil
+}
+
+func (r *jsonAliasRepo) FindByName(ctx context.Context, name string) (*ModelAlias, error) {
+	store := r.driver.load()
+	if store.Aliases == nil {
+		return nil, nil
+	}
+	for _, a := range store.Aliases {
+		if a.Name == name {
+			return a, nil
+		}
+	}
+	return nil, nil
+}
+
+func (r *jsonAliasRepo) FindByUser(ctx context.Context, userID string) ([]*ModelAlias, error) {
+	store := r.driver.load()
+	var result []*ModelAlias
+	for _, a := range store.Aliases {
+		if a.UserID == userID {
+			result = append(result, a)
+		}
+	}
+	return result, nil
+}
+
+func (r *jsonAliasRepo) ListGlobal(ctx context.Context) ([]*ModelAlias, error) {
+	store := r.driver.load()
+	var result []*ModelAlias
+	for _, a := range store.Aliases {
+		if a.UserID == "" {
+			result = append(result, a)
+		}
+	}
+	return result, nil
+}
+
+func (r *jsonAliasRepo) Update(ctx context.Context, alias *ModelAlias) error {
+	store := r.driver.load()
+	store.Aliases[alias.ID] = alias
+	r.driver.mu.Lock()
+	r.driver.store.Aliases = store.Aliases
+	r.driver.mu.Unlock()
+	return r.driver.save()
+}
+
+func (r *jsonAliasRepo) Delete(ctx context.Context, id string) error {
+	store := r.driver.load()
+	delete(store.Aliases, id)
+	r.driver.mu.Lock()
+	r.driver.store.Aliases = store.Aliases
+	r.driver.mu.Unlock()
+	return r.driver.save()
+}

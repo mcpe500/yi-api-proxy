@@ -14,31 +14,34 @@ ProviderAdapter adalah interface untuk semua provider adapters, memungkinkan req
 
 ```go
 type ProviderAdapter interface {
-    // Metadata
     Name() string
     Provider() string
     Capabilities() Capabilities
-    
-    // Request handling
-    TranslateRequest(ctx context.Context, req NormalizedChatRequest, cred *Credential) (*http.Request, error)
-    ParseResponse(ctx context.Context, resp *http.Response, req NormalizedChatRequest) (*NormalizedChatResponse, error)
-    StreamResponse(ctx context.Context, resp *http.Response, req NormalizedChatRequest) (<-chan StreamEvent, error)
-    
-    // Credential handling
-    RefreshCredentials(ctx context.Context, cred *Credential) (*Credential, error)
-    TestConnection(ctx context.Context, cred *Credential) error
-    
-    // Model info
-    ListModels(ctx context.Context, cred *Credential) ([]Model, error)
-}
 
+    // Chat translation
+    TranslateRequest(req *NormalizedChatRequest, baseURL, apiKey string) (*http.Request, error)
+    ParseResponse(resp *http.Response) (*NormalizedChatResponse, error)
+    ParseStreamChunk(data []byte) (*StreamEvent, error)
+
+    // Embeddings
+    TranslateEmbeddingRequest(model string, input interface{}, baseURL, apiKey string) (*http.Request, error)
+    ParseEmbeddingResponse(resp *http.Response) (interface{}, error)
+
+    // Model mapping
+    ModelID(model string) string
+}
+```
+
+## Capabilities
+
+```go
 type Capabilities struct {
-    SupportsChat        bool
-    SupportsStreaming   bool
-    SupportsTools       bool
-    SupportsVision      bool
-    SupportsJSONMode    bool
-    SupportsEmbeddings  bool
+    Chat       bool
+    Streaming  bool
+    Tools      bool
+    Vision     bool
+    JSONMode   bool
+    Embeddings bool
 }
 ```
 
@@ -46,47 +49,62 @@ type Capabilities struct {
 
 ```go
 type NormalizedChatRequest struct {
-    RequestID       string
-    UserID          string
-    Model           string
-    Messages        []Message
-    Tools           []Tool
-    Stream          bool
-    Temperature      *float64
-    MaxTokens        *int
-    // ...
+    Model       string                 `json:"model"`
+    Messages    []NormalizedMessage    `json:"messages"`
+    Stream      bool                   `json:"stream"`
+    Temperature *float64               `json:"temperature,omitempty"`
+    MaxTokens   *int                   `json:"max_tokens,omitempty"`
+    TopP        *float64               `json:"top_p,omitempty"`
+    Stop        interface{}            `json:"stop,omitempty"`
+    Tools       interface{}            `json:"tools,omitempty"`
+    Extra       map[string]interface{} `json:"-"`
+}
+
+type NormalizedMessage struct {
+    Role    string `json:"role"`
+    Content string `json:"content"`
+    Name    string `json:"name,omitempty"`
 }
 
 type NormalizedChatResponse struct {
-    ID      string
-    Model   string
-    Choices []Choice
-    Usage   Usage
-    Created int64
+    ID      string             `json:"id"`
+    Object  string             `json:"object"`
+    Created int64              `json:"created"`
+    Model   string             `json:"model"`
+    Choices []NormalizedChoice `json:"choices"`
+    Usage   *NormalizedUsage   `json:"usage,omitempty"`
+}
+
+type StreamEvent struct {
+    ID      string             `json:"id"`
+    Object  string             `json:"object"`
+    Created int64              `json:"created"`
+    Model   string             `json:"model"`
+    Choices []NormalizedChoice `json:"choices"`
+    Usage   *NormalizedUsage   `json:"usage,omitempty"`
+    Done    bool               `json:"-"`
 }
 ```
 
-## Adapters
+## Registered Adapters
 
 | Adapter | Provider | Notes |
 |---------|----------|-------|
-| openai | api.openai.com | Native, passthrough |
-| openai_compatible | Custom base URL | Passthrough with custom endpoint |
-| glm | OpenAI-compatible | Zhipu JWT auth |
-| minimax | OpenAI-compatible | Different endpoint path |
-| commandcode | CommandCode | Custom request/response mapping |
-| opencodego | OpenCode Go | Local/remote, no-auth/API key |
+| openai | OpenAI | Direct passthrough |
+| openai_compatible | OpenAI-compatible | Custom base URL support |
+| glm | Zhipu GLM | JWT auth |
+| minimax | MiniMax | OpenAI-compatible endpoint |
 
-## Registry
+## Translation Flow
 
-```go
-type AdapterRegistry struct {
-    adapters map[string]ProviderAdapter
-}
-
-func (r *AdapterRegistry) Register(adapter ProviderAdapter)
-func (r *AdapterRegistry) Get(provider string) ProviderAdapter
-func (r *AdapterRegistry) List() []ProviderAdapter
+```
+1. Parse incoming request → NormalizedChatRequest
+2. Lookup adapter by provider name
+3. adapter.TranslateRequest() → provider-specific http.Request
+4. Execute HTTP request upstream
+5. adapter.ParseResponse() → NormalizedChatResponse (non-stream)
+   OR adapter.ParseStreamChunk() → StreamEvent (streaming)
+6. Return OpenAI-compatible response
 ```
 
 ## Related Specs

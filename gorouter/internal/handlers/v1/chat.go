@@ -11,6 +11,7 @@ import (
 	"github.com/gorouter/gorouter/internal/combo"
 	"github.com/gorouter/gorouter/internal/db"
 	"github.com/gorouter/gorouter/internal/middleware"
+	"github.com/gorouter/gorouter/internal/models"
 	"github.com/gorouter/gorouter/internal/streaming"
 	"github.com/gorouter/gorouter/internal/translator"
 )
@@ -84,7 +85,24 @@ func (h *ChatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	w.Header().Set("X-Request-ID", requestID)
 
+	claims := middleware.GetUserClaims(ctx)
+	userID := ""
+	if claims != nil {
+		userID = claims.UserID
+	}
+
+	resolver := &models.ModelResolver{DB: h.DB}
+	resolvedModel, resolvedProvider, err := resolver.Resolve(ctx, req.Model, userID)
+	if err != nil {
+		writeError(w, "failed to resolve model alias", "invalid_request_error", "alias_error", http.StatusBadRequest)
+		return
+	}
+	if resolvedModel != "" {
+		req.Model = resolvedModel
+	}
+
 	startTime := time.Now()
+	_ = resolvedProvider
 
 	if req.Stream {
 		h.handleStreaming(ctx, w, &req, requestID, startTime)

@@ -131,3 +131,34 @@ All 12 blocking gaps from audit addressed:
 - go vet: clean
 - Adapters: 4 registered (openai, openai_compatible, glm, minimax)
 - Routes: /admin/providers/* now available
+
+## [2026-05-12] implement | Model aliases, audit logging, compat endpoints
+
+### New features:
+- Model alias system: ModelResolver resolves aliases (e.g. "fast-code" → "glm/glm-4-flash")
+  - internal/models/alias.go - ModelResolver with Resolve(), inferProvider()
+  - internal/db/dbmanager.go - ModelAliasRepository + jsonAliasRepo
+  - internal/db/sqlite.go - sqliteAliasRepo + model_aliases table
+  - internal/handlers/admin/aliases.go - CRUD at /admin/aliases
+  - Chat handler uses ModelResolver before routing
+
+- Audit auto-logging: all admin actions logged to audit trail
+  - internal/audit/audit.go - AuditLogger with async Log()
+  - internal/middleware/audit.go - AuditContextMiddleware + GetClientIP()
+  - All admin handlers now accept *audit.AuditLogger
+  - Actions logged: login, user CRUD, provider CRUD, API key ops, model ops, rate limit
+
+- Compatibility endpoints:
+  - POST /v1/responses - OpenAI Responses API (input parsing, converts to chat)
+  - POST /v1/messages - Claude Messages API (system field, converts to chat)
+
+### Wiki component updates:
+- provider-adapter.md: actual interface signature, registered adapters table
+- gateway.md: IMPLEMENTED/NOT IMPLEMENTED status, actual pipeline
+- dbmanager.md: SQLite driver section, driver status
+- routing.md: real HTTP forwarding, cooldown mechanism
+
+### Key metrics:
+- Binary: 12.4MB optimized
+- go vet: clean
+- Routes: added /admin/aliases/*, /v1/responses, /v1/messages

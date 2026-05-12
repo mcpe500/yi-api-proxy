@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -12,15 +13,18 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/gorouter/gorouter/internal/audit"
 	"github.com/gorouter/gorouter/internal/db"
+	"github.com/gorouter/gorouter/internal/middleware"
 )
 
 type RateLimitHandler struct {
-	db db.DatabaseManager
+	db          db.DatabaseManager
+	auditLogger *audit.AuditLogger
 }
 
-func NewRateLimitHandler(dbMgr db.DatabaseManager) *RateLimitHandler {
-	return &RateLimitHandler{db: dbMgr}
+func NewRateLimitHandler(dbMgr db.DatabaseManager, auditLogger *audit.AuditLogger) *RateLimitHandler {
+	return &RateLimitHandler{db: dbMgr, auditLogger: auditLogger}
 }
 
 func (h *RateLimitHandler) Routes() chi.Router {
@@ -115,6 +119,8 @@ func (h *RateLimitHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.logAudit(r, "ratelimit_updated", "rate_limit", rl.ID, fmt.Sprintf("user_id=%s rpm=%d rpd=%d tpm=%d", rl.UserID, rl.RequestsPerMinute, rl.RequestsPerDay, rl.TokensPerMinute))
+
 	writeJSON(w, http.StatusCreated, rl)
 }
 
@@ -155,6 +161,8 @@ func (h *RateLimitHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.logAudit(r, "ratelimit_updated", "rate_limit", existing.ID, fmt.Sprintf("user_id=%s rpm=%d rpd=%d tpm=%d", existing.UserID, existing.RequestsPerMinute, existing.RequestsPerDay, existing.TokensPerMinute))
+
 	writeJSON(w, http.StatusOK, existing)
 }
 
@@ -178,6 +186,8 @@ func (h *RateLimitHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+
+	h.logAudit(r, "ratelimit_updated", "rate_limit", id, fmt.Sprintf("deleted user_id=%s", existing.UserID))
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
@@ -216,4 +226,12 @@ func getStringParam(r *http.Request, key string) string {
 		val = r.URL.Query().Get(key)
 	}
 	return strings.TrimSpace(val)
+}
+
+func (h *RateLimitHandler) logAudit(r *http.Request, action, targetType, targetID, details string) {
+	if h.auditLogger == nil {
+		return
+	}
+	actor := middleware.GetAuditActor(r.Context())
+	h.auditLogger.Log(r.Context(), actor, action, targetType, targetID, details)
 }

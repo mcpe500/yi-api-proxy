@@ -2,20 +2,24 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/gorouter/gorouter/internal/audit"
 	"github.com/gorouter/gorouter/internal/db"
+	"github.com/gorouter/gorouter/internal/middleware"
 )
 
 type ModelHandler struct {
-	db db.DatabaseManager
+	db          db.DatabaseManager
+	auditLogger *audit.AuditLogger
 }
 
-func NewModelHandler(dbManager db.DatabaseManager) *ModelHandler {
-	return &ModelHandler{db: dbManager}
+func NewModelHandler(dbManager db.DatabaseManager, auditLogger *audit.AuditLogger) *ModelHandler {
+	return &ModelHandler{db: dbManager, auditLogger: auditLogger}
 }
 
 func (h *ModelHandler) Routes() chi.Router {
@@ -111,6 +115,7 @@ func (h *ModelHandler) CreateModel(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	h.logAudit(r, "model_created", "model", model.ID, fmt.Sprintf("name=%s provider_id=%s", model.DisplayName, model.ProviderID))
 	writeJSON(w, http.StatusCreated, model)
 }
 
@@ -152,6 +157,7 @@ func (h *ModelHandler) UpdateModel(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	h.logAudit(r, "model_updated", "model", existing.ID, fmt.Sprintf("name=%s", existing.DisplayName))
 	writeJSON(w, http.StatusOK, existing)
 }
 
@@ -161,5 +167,14 @@ func (h *ModelHandler) DeleteModel(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	h.logAudit(r, "model_deleted", "model", id, "")
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+func (h *ModelHandler) logAudit(r *http.Request, action, targetType, targetID, details string) {
+	if h.auditLogger == nil {
+		return
+	}
+	actor := middleware.GetAuditActor(r.Context())
+	h.auditLogger.Log(r.Context(), actor, action, targetType, targetID, details)
 }

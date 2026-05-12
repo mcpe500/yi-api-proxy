@@ -2,21 +2,24 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/gorouter/gorouter/internal/apikeys"
+	"github.com/gorouter/gorouter/internal/audit"
 	"github.com/gorouter/gorouter/internal/middleware"
 )
 
 type AdminApiKeyHandler struct {
-	svc *apikeys.ApiKeyService
+	svc          *apikeys.ApiKeyService
+	auditLogger  *audit.AuditLogger
 }
 
-func NewAdminApiKeyHandler(svc *apikeys.ApiKeyService) *AdminApiKeyHandler {
-	return &AdminApiKeyHandler{svc: svc}
+func NewAdminApiKeyHandler(svc *apikeys.ApiKeyService, auditLogger *audit.AuditLogger) *AdminApiKeyHandler {
+	return &AdminApiKeyHandler{svc: svc, auditLogger: auditLogger}
 }
 
 func (h *AdminApiKeyHandler) ListAll(w http.ResponseWriter, r *http.Request) {
@@ -68,6 +71,8 @@ func (h *AdminApiKeyHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.logAudit(r, "apikey_created", "api_key", created.ID, fmt.Sprintf("user_id=%s name=%s", userID, req.Name))
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -97,6 +102,7 @@ func (h *AdminApiKeyHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
+	h.logAudit(r, "apikey_revoked", "api_key", keyID, "")
 	writeJSON(w, http.StatusOK, map[string]string{"message": "API key revoked"})
 }
 
@@ -107,6 +113,7 @@ func (h *AdminApiKeyHandler) Rotate(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
+	h.logAudit(r, "apikey_rotated", "api_key", keyID, "")
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -147,4 +154,12 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(v)
+}
+
+func (h *AdminApiKeyHandler) logAudit(r *http.Request, action, targetType, targetID, details string) {
+	if h.auditLogger == nil {
+		return
+	}
+	actor := middleware.GetAuditActor(r.Context())
+	h.auditLogger.Log(r.Context(), actor, action, targetType, targetID, details)
 }

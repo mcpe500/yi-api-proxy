@@ -12,19 +12,23 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/gorouter/gorouter/internal/audit"
 	"github.com/gorouter/gorouter/internal/crypto"
 	"github.com/gorouter/gorouter/internal/db"
+	"github.com/gorouter/gorouter/internal/middleware"
 )
 
 type ProviderHandler struct {
-	db db.DatabaseManager
-	httpClient *http.Client
+	db          db.DatabaseManager
+	auditLogger *audit.AuditLogger
+	httpClient  *http.Client
 }
 
-func NewProviderHandler(dbMgr db.DatabaseManager) *ProviderHandler {
+func NewProviderHandler(dbMgr db.DatabaseManager, auditLogger *audit.AuditLogger) *ProviderHandler {
 	return &ProviderHandler{
-		db: dbMgr,
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		db:          dbMgr,
+		auditLogger: auditLogger,
+		httpClient:  &http.Client{Timeout: 30 * time.Second},
 	}
 }
 
@@ -171,6 +175,8 @@ func (h *ProviderHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.logAudit(r, "provider_created", "provider", conn.ID, fmt.Sprintf("name=%s provider=%s", conn.Name, conn.Provider))
+
 	writeJSON(w, http.StatusCreated, providerToResponse(conn))
 }
 
@@ -220,6 +226,8 @@ func (h *ProviderHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.logAudit(r, "provider_updated", "provider", conn.ID, fmt.Sprintf("name=%s", conn.Name))
+
 	writeJSON(w, http.StatusOK, providerToResponse(conn))
 }
 
@@ -242,6 +250,8 @@ func (h *ProviderHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+
+	h.logAudit(r, "provider_deleted", "provider", id, fmt.Sprintf("name=%s", conn.Name))
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
@@ -306,6 +316,7 @@ func (h *ProviderHandler) Test(w http.ResponseWriter, r *http.Request) {
 
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		h.logAudit(r, "provider_tested", "provider", id, fmt.Sprintf("name=%s status_code=%d", conn.Name, resp.StatusCode))
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"status":     "success",
 			"status_code": resp.StatusCode,
@@ -343,6 +354,7 @@ func (h *ProviderHandler) Enable(w http.ResponseWriter, r *http.Request) {
 	}
 
 	conn.Status = "active"
+	h.logAudit(r, "provider_enabled", "provider", id, fmt.Sprintf("name=%s", conn.Name))
 	writeJSON(w, http.StatusOK, providerToResponse(conn))
 }
 
@@ -367,6 +379,7 @@ func (h *ProviderHandler) Disable(w http.ResponseWriter, r *http.Request) {
 	}
 
 	conn.Status = "disabled"
+	h.logAudit(r, "provider_disabled", "provider", id, fmt.Sprintf("name=%s", conn.Name))
 	writeJSON(w, http.StatusOK, providerToResponse(conn))
 }
 
@@ -405,4 +418,12 @@ func copyHeader(dst, src http.Header, key string) {
 func copyBody(dst *bytes.Buffer, src io.Reader) error {
 	_, err := io.Copy(dst, src)
 	return err
+}
+
+func (h *ProviderHandler) logAudit(r *http.Request, action, targetType, targetID, details string) {
+	if h.auditLogger == nil {
+		return
+	}
+	actor := middleware.GetAuditActor(r.Context())
+	h.auditLogger.Log(r.Context(), actor, action, targetType, targetID, details)
 }

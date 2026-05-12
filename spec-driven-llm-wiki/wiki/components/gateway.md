@@ -12,33 +12,27 @@ Gateway adalah OpenAI-compatible API endpoint utama yang melayani request dari u
 
 ## Endpoints
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/v1/chat/completions` | POST | Chat completions (streaming + non-streaming) |
-| `/v1/models` | GET | Model list (filtered by permission) |
-| `/v1/responses` | POST | OpenAI Responses API |
-| `/v1/messages` | POST | Claude Messages API |
-| `/v1/embeddings` | POST | Embeddings |
-| `/health` | GET | Health check |
-| `/ready` | GET | Readiness check |
+| Endpoint | Method | Description | Status |
+|----------|--------|-------------|--------|
+| `/v1/chat/completions` | POST | Chat completions (streaming + non-streaming) | IMPLEMENTED |
+| `/v1/models` | GET | Model list | IMPLEMENTED |
+| `/v1/embeddings` | POST | Embeddings | IMPLEMENTED |
+| `/v1/responses` | POST | OpenAI Responses API | NOT IMPLEMENTED |
+| `/v1/messages` | POST | Claude Messages API | NOT IMPLEMENTED |
+| `/health` | GET | Health check | IMPLEMENTED |
+| `/ready` | GET | Readiness check | IMPLEMENTED |
 
 ## Request Pipeline
 
 ```
-1. CORS middleware
-2. API key auth middleware
-3. Load user + permissions
-4. Validate request
-5. Resolve model (direct, alias, combo)
-6. Check model permission
-7. Get provider adapter
-8. Get provider account (active, not cooldown)
-9. Translate request via adapter
-10. Execute upstream request
-11. Fallback if error eligible (spec 011)
-12. Normalize response via adapter
-13. Stream/non-stream response
-14. Record usage event
+1. API key auth middleware (RequireAPIKey)
+2. Rate limiter middleware
+3. Resolve model (combo first, then direct model lookup)
+4. Get adapter from registry
+5. Translate request via adapter
+6. Execute upstream HTTP request
+7. Record usage event
+8. Stream/JSON response
 ```
 
 ## Streaming SSE

@@ -17,6 +17,7 @@ import (
 
 	_ "github.com/gorouter/gorouter/internal/adapters"
 	"github.com/gorouter/gorouter/internal/apikeys"
+	"github.com/gorouter/gorouter/internal/audit"
 	"github.com/gorouter/gorouter/internal/auth"
 	"github.com/gorouter/gorouter/internal/combo"
 	"github.com/gorouter/gorouter/internal/config"
@@ -116,6 +117,8 @@ func main() {
 	}
 	log.Info("Database connected", "driver", cfg.NormalizedDriver())
 
+	auditLogger := audit.NewAuditLogger(dbManager)
+
 	jwtSecret := cfg.SessionSecret
 	if jwtSecret == "" {
 		jwtSecret = "dev-secret-change-me"
@@ -148,7 +151,7 @@ func main() {
 	})
 
 	// --- Auth routes ---
-	authHandler := admin.NewAuthHandler(dbManager.Users(), jwtSecret)
+	authHandler := admin.NewAuthHandler(dbManager.Users(), jwtSecret, auditLogger)
 	r.Route("/auth", func(r chi.Router) {
 		r.Post("/login", authHandler.Login)
 		r.Post("/refresh", authHandler.Refresh)
@@ -159,12 +162,13 @@ func main() {
 	dashboardHandler := admin.NewDashboardHandler(dbManager)
 	systemHandler := admin.NewSystemHandler(cfg, Version)
 	auditHandler := admin.NewAuditHandler(dbManager)
-	adminApiKeyHandler := handlers.NewAdminApiKeyHandler(apiKeySvc)
-	rateLimitHandler := admin.NewRateLimitHandler(dbManager)
-	userHandler := admin.NewUserHandler(dbManager)
-	providerHandler := admin.NewProviderHandler(dbManager)
+	adminApiKeyHandler := handlers.NewAdminApiKeyHandler(apiKeySvc, auditLogger)
+	rateLimitHandler := admin.NewRateLimitHandler(dbManager, auditLogger)
+	userHandler := admin.NewUserHandler(dbManager, auditLogger)
+	providerHandler := admin.NewProviderHandler(dbManager, auditLogger)
 
 	r.Route("/admin", func(r chi.Router) {
+		r.Use(middleware.AuditContextMiddleware())
 		r.Use(middleware.RequireAuth(jwtSecret))
 		r.Use(middleware.RequireAdmin())
 
@@ -181,12 +185,12 @@ func main() {
 			r.Get("/logs", auditHandler.Logs)
 		})
 		r.Route("/models", func(r chi.Router) {
-			modelHandler := handlers.NewModelHandler(dbManager)
+			modelHandler := handlers.NewModelHandler(dbManager, auditLogger)
 			r.Get("/", modelHandler.ListModels)
 			r.Post("/", modelHandler.CreateModel)
 			r.Get("/{id}", modelHandler.GetModel)
 			r.Put("/{id}", modelHandler.UpdateModel)
-			r.Delete("/{id}", modelHandler.DeleteModel)
+		r.Delete("/{id}", modelHandler.DeleteModel)
 		})
 		adminApiKeyHandler.RegisterAdminRoutes(r)
 		adminApiKeyHandler.RegisterUserKeyRoutes(r)
@@ -194,8 +198,6 @@ func main() {
 		r.Mount("/users", userHandler.Routes())
 		r.Mount("/providers", providerHandler.Routes())
 	})
-
-	// --- User routes (/me/*) ---
 	userKeyHandler := handlers.NewUserKeyHandler(apiKeySvc, jwtSecret)
 	userKeyHandler.RegisterRoutes(r)
 	usageHandler := user.NewUsageHandler(dbManager)
@@ -217,6 +219,8 @@ func main() {
 		Combos: comboManager,
 		Logger: log,
 	}
+	responsesHandler := v1.NewResponsesHandler(dbManager, comboManager, log)
+	messagesHandler := v1.NewMessagesHandler(dbManager, comboManager, log)
 	modelsHandler := v1.NewModelsHandler(dbManager)
 	embeddingsHandler := v1.NewEmbeddingHandler(dbManager, "")
 
@@ -233,6 +237,8 @@ func main() {
 		r.Use(rateLimiter.Middleware())
 
 		r.Post("/chat/completions", chatHandler.ServeHTTP)
+		r.Post("/responses", responsesHandler.ServeHTTP)
+		r.Post("/messages", messagesHandler.ServeHTTP)
 		r.Get("/models", modelsHandler.ServeHTTP)
 		r.Post("/embeddings", embeddingsHandler.ServeHTTP)
 	})
