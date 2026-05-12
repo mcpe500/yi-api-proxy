@@ -2,6 +2,7 @@ package routing
 
 import (
 	"context"
+	"fmt"
 	"math/rand"
 	"sort"
 
@@ -43,19 +44,77 @@ func (r *Router) SelectProvider(ctx context.Context, modelID string) (*db.Provid
 		active = providers
 	}
 
+	return r.selectByStrategy(active, modelID), nil
+}
+
+func (r *Router) SelectProviderForModel(ctx context.Context, modelID string) (*db.ProviderConnection, error) {
+	allModels, err := r.db.Models().ListEnabled(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var targetProviderIDs []string
+	for _, m := range allModels {
+		if m.ModelID == modelID || m.ModelName == modelID || m.ID == modelID {
+			targetProviderIDs = append(targetProviderIDs, m.ProviderID)
+			break
+		}
+	}
+
+	if len(targetProviderIDs) == 0 {
+		return nil, fmt.Errorf("no providers found for model: %s", modelID)
+	}
+
+	allProviders, err := r.db.Providers().List(ctx)
+	if err != nil || len(allProviders) == 0 {
+		return nil, err
+	}
+
+	var candidates []*db.ProviderConnection
+	for _, p := range allProviders {
+		for _, id := range targetProviderIDs {
+			if p.ID == id {
+				candidates = append(candidates, p)
+				break
+			}
+		}
+	}
+
+	if len(candidates) == 0 {
+		return nil, fmt.Errorf("no active providers for model: %s", modelID)
+	}
+
+	var active []*db.ProviderConnection
+	for _, p := range candidates {
+		if p.Status == "active" {
+			active = append(active, p)
+		}
+	}
+	if len(active) == 0 {
+		active = candidates
+	}
+
+	return r.selectByStrategy(active, modelID), nil
+}
+
+func (r *Router) selectByStrategy(providers []*db.ProviderConnection, modelID string) *db.ProviderConnection {
+	if len(providers) == 0 {
+		return nil
+	}
+
 	switch r.strat {
 	case StrategyPriority:
-		return r.byPriority(active), nil
+		return r.byPriority(providers)
 	case StrategyWeighted:
-		return r.byWeighted(active), nil
+		return r.byWeighted(providers)
 	case StrategyLatency:
-		return r.byLatency(active), nil
+		return r.byLatency(providers)
 	case StrategyCost:
-		return r.byCost(ctx, active, modelID), nil
+		return r.byCost(providers, modelID)
 	case StrategyFallback:
-		return r.byFallback(active), nil
+		return r.byFallback(providers)
 	default:
-		return r.byPriority(active), nil
+		return r.byPriority(providers)
 	}
 }
 
@@ -96,9 +155,9 @@ func (r *Router) byLatency(providers []*db.ProviderConnection) *db.ProviderConne
 	return providers[0]
 }
 
-func (r *Router) byCost(ctx context.Context, providers []*db.ProviderConnection, modelID string) *db.ProviderConnection {
-	models, err := r.db.Models().ListEnabled(ctx)
-	if err != nil {
+func (r *Router) byCost(providers []*db.ProviderConnection, modelID string) *db.ProviderConnection {
+	models, _ := r.db.Models().ListEnabled(context.Background())
+	if models == nil {
 		return providers[0]
 	}
 	sort.Slice(providers, func(i, j int) bool {
@@ -122,8 +181,5 @@ func (r *Router) byFallback(providers []*db.ProviderConnection) *db.ProviderConn
 	sort.Slice(providers, func(i, j int) bool {
 		return providers[i].Priority > providers[j].Priority
 	})
-	if len(providers) > 0 {
-		return providers[0]
-	}
-	return nil
+	return providers[0]
 }

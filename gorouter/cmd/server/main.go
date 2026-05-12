@@ -30,6 +30,8 @@ import (
 	"github.com/gorouter/gorouter/internal/handlers/user"
 	"github.com/gorouter/gorouter/internal/logger"
 	ourmw "github.com/gorouter/gorouter/internal/middleware"
+	"github.com/gorouter/gorouter/internal/provider"
+	"github.com/gorouter/gorouter/internal/routing"
 )
 
 const Version = "0.1.0-dev"
@@ -223,10 +225,14 @@ func main() {
 	})
 
 	// --- V1 API routes ---
+	router := routing.NewRouter(dbManager, routing.Strategy(cfg.RoutingStrategy))
+	log.Info("Routing strategy", "strategy", cfg.RoutingStrategy)
+
 	chatHandler := &v1.ChatHandler{
 		DB:     dbManager,
 		Combos: comboManager,
 		Logger: log,
+		Router: router,
 	}
 	responsesHandler := v1.NewResponsesHandler(dbManager, comboManager, log)
 	messagesHandler := v1.NewMessagesHandler(dbManager, comboManager, log)
@@ -270,10 +276,17 @@ func main() {
 		}
 	}()
 
+	healthMonitor := provider.NewHealthMonitor(dbManager, 30*time.Second)
+	healthMonitor.Start()
+	log.Info("Health monitor started")
+
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	sig := <-quit
 	log.Info("Shutting down", "signal", sig)
+
+	healthMonitor.Stop()
+	log.Info("Health monitor stopped")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

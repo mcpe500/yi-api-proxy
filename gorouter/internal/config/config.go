@@ -23,6 +23,7 @@ type AppConfig struct {
 	RequestLogRetentionDays int
 	AuditLogRetentionDays   int
 	IsProduction            bool
+	RoutingStrategy         string
 }
 
 func Load() *AppConfig {
@@ -42,7 +43,12 @@ func Load() *AppConfig {
 	}
 	cfg.RequireAPIKey = getEnvBool("GOROUTER_REQUIRE_API_KEY", false)
 	cfg.EnableRequestBodyLog = getEnvBool("GOROUTER_ENABLE_REQUEST_BODY_LOG", false)
+	cfg.RoutingStrategy = getEnv("GOROUTER_ROUTING_STRATEGY", "priority")
 	cfg.IsProduction = getEnv("APP_ENV", "development") == "production"
+
+	if !isValidStrategy(cfg.RoutingStrategy) {
+		cfg.RoutingStrategy = "priority"
+	}
 
 	if cfg.SessionSecret == "" && cfg.IsProduction {
 		cfg.SessionSecret = mustGenerateOrPanic("GOROUTER_SESSION_SECRET")
@@ -101,4 +107,12 @@ func getEnvBool(key string, fallback bool) bool {
 func mustGenerateOrPanic(key string) string {
 	_ = key
 	return ""
+}
+
+func isValidStrategy(s string) bool {
+	switch s {
+	case "priority", "weighted", "latency", "cost", "fallback":
+		return true
+	}
+	return false
 }

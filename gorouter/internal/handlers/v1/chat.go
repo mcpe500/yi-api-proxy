@@ -13,6 +13,7 @@ import (
 	"github.com/gorouter/gorouter/internal/db"
 	"github.com/gorouter/gorouter/internal/middleware"
 	"github.com/gorouter/gorouter/internal/models"
+	"github.com/gorouter/gorouter/internal/routing"
 	"github.com/gorouter/gorouter/internal/streaming"
 	"github.com/gorouter/gorouter/internal/translator"
 )
@@ -59,6 +60,7 @@ type ChatHandler struct {
 	DB     db.DatabaseManager
 	Combos *combo.ComboManager
 	Logger *slog.Logger
+	Router *routing.Router
 }
 
 func (h *ChatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -205,7 +207,17 @@ func (h *ChatHandler) executeDirectRequest(ctx context.Context, w http.ResponseW
 		return "", req.Model, http.StatusBadRequest
 	}
 
-	providerConn, err := h.DB.Providers().FindByID(ctx, targetModel.ProviderID)
+	var providerConn *db.ProviderConnection
+
+	if h.Router != nil {
+		providerConn, err = h.Router.SelectProviderForModel(ctx, targetModel.ModelID)
+		if err != nil || providerConn == nil {
+			providerConn, err = h.DB.Providers().FindByID(ctx, targetModel.ProviderID)
+		}
+	} else {
+		providerConn, err = h.DB.Providers().FindByID(ctx, targetModel.ProviderID)
+	}
+
 	if err != nil || providerConn == nil {
 		writeError(w, "provider not found", "upstream_error", "provider_not_found", http.StatusServiceUnavailable)
 		return "", targetModel.ModelID, http.StatusServiceUnavailable
@@ -247,13 +259,19 @@ func (h *ChatHandler) executeDirectRequest(ctx context.Context, w http.ResponseW
 
 	httpReq.Header.Set("X-Request-ID", requestID)
 
+	reqStart := time.Now()
 	client := &http.Client{Timeout: 60 * time.Second}
 	resp, err := client.Do(httpReq.WithContext(ctx))
+	latencyMs := int(time.Since(reqStart).Milliseconds())
+
 	if err != nil {
+		h.updateProviderLatency(context.Background(), providerConn.ID, latencyMs)
 		writeError(w, "upstream request failed", "upstream_error", "request_failed", http.StatusBadGateway)
 		return providerConn.Provider, targetModel.ModelID, http.StatusBadGateway
 	}
 	defer resp.Body.Close()
+
+	h.updateProviderLatency(context.Background(), providerConn.ID, latencyMs)
 
 	if resp.StatusCode >= 400 {
 		bodyBytes, _ := io.ReadAll(resp.Body)
@@ -370,4 +388,16 @@ func extractUsage(data map[string]any) *Usage {
 
 func calculateCost(promptTokens, completionTokens, inputPrice, outputPrice int) float64 {
 	return float64(promptTokens)*float64(inputPrice)/1000 + float64(completionTokens)*float64(outputPrice)/1000
+}
+
+func (h *ChatHandler) updateProviderLatency(ctx context.Context, providerID string, latencyMs int) {
+	if h.DB == nil || providerID == "" {
+		return
+	}
+	p, err := h.DB.Providers().FindByID(ctx, providerID)
+	if err != nil || p == nil {
+		return
+	}
+	p.LastLatencyMs = latencyMs
+	h.DB.Providers().Update(ctx, p)
 }
