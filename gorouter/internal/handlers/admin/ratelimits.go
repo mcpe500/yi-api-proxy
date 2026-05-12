@@ -99,7 +99,7 @@ func (h *RateLimitHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	id := generateID()
+	id := generateRateLimitID()
 	rl := &db.RateLimit{
 		ID:                id,
 		UserID:            req.UserID,
@@ -195,13 +195,7 @@ type updateRateLimitRequest struct {
 	TokensPerMinute   *int `json:"tokens_per_minute,omitempty"`
 }
 
-func writeJSON(w http.ResponseWriter, status int, data interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(data)
-}
-
-func generateID() string {
+func generateRateLimitID() string {
 	b := make([]byte, 16)
 	rand.Read(b)
 	return "rl_" + hex.EncodeToString(b)

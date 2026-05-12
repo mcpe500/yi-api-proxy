@@ -2,19 +2,28 @@ package combo
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
 	"github.com/gorouter/gorouter/internal/db"
+	"github.com/gorouter/gorouter/internal/translator"
 )
 
 type ComboManager struct {
-	db db.DatabaseManager
+	db         db.DatabaseManager
+	httpClient *http.Client
 }
 
 func NewComboManager(database db.DatabaseManager) *ComboManager {
-	return &ComboManager{db: database}
+	return &ComboManager{
+		db: database,
+		httpClient: &http.Client{
+			Timeout: 120 * time.Second,
+		},
+	}
 }
 
 func (m *ComboManager) LoadCombos(ctx context.Context) ([]*db.Combo, error) {
@@ -58,27 +67,23 @@ func (m *ComboManager) ReorderItems(ctx context.Context, comboID string, itemIDs
 }
 
 type ExecuteRequest struct {
-	Model    string                 `json:"model"`
-	Messages []map[string]string    `json:"messages"`
-	Stream   bool                   `json:"stream,omitempty"`
+	Model    string              `json:"model"`
+	Messages []map[string]string `json:"messages"`
+	Stream   bool                `json:"stream,omitempty"`
 }
 
 type ExecuteResponse struct {
-	Success       bool               `json:"success"`
-	Model         string             `json:"model,omitempty"`
-	Response      map[string]any     `json:"response,omitempty"`
-	Error         *ExecuteError      `json:"error,omitempty"`
-	FallbackCount int                `json:"fallback_count"`
-	LatencyMs     int                `json:"latency_ms"`
+	Success       bool           `json:"success"`
+	Model         string         `json:"model,omitempty"`
+	Response      map[string]any `json:"response,omitempty"`
+	Error         *ExecuteError  `json:"error,omitempty"`
+	FallbackCount int            `json:"fallback_count"`
+	LatencyMs     int            `json:"latency_ms"`
 }
 
 type ExecuteError struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
-}
-
-type httpClient interface {
-	Do(*http.Request) (*http.Response, error)
 }
 
 func (m *ComboManager) Execute(ctx context.Context, comboID string, req ExecuteRequest) (*ExecuteResponse, error) {
@@ -195,8 +200,122 @@ func (m *ComboManager) executeItem(ctx context.Context, item *db.ComboItem, req 
 		}
 	}
 
+	adapter, err := translator.Get(provider.Provider)
+	if err != nil {
+		return &itemResult{
+			Success:          false,
+			FallbackEligible: true,
+			Error: &ExecuteError{
+				Code:    "adapter_not_found",
+				Message: fmt.Sprintf("no adapter for provider %s", provider.Provider),
+			},
+		}, nil
+	}
+
+	apiKey := string(provider.EncryptedSecret)
+
+	normReq := &translator.NormalizedChatRequest{
+		Model:    item.ModelID,
+		Messages: convertMessages(req.Messages),
+		Stream:   false,
+	}
+
+	httpReq, err := adapter.TranslateRequest(normReq, provider.BaseURL, apiKey)
+	if err != nil {
+		return &itemResult{
+			Success:          false,
+			FallbackEligible: true,
+			Error: &ExecuteError{
+				Code:    "translate_error",
+				Message: fmt.Sprintf("failed to translate request: %v", err),
+			},
+		}, nil
+	}
+
+	resp, err := m.httpClient.Do(httpReq.WithContext(ctx))
+	if err != nil {
+		m.markCooldown(provider, err.Error())
+		return &itemResult{
+			Success:          false,
+			FallbackEligible: true,
+			Error: &ExecuteError{
+				Code:    "request_failed",
+				Message: fmt.Sprintf("HTTP request failed: %v", err),
+			},
+		}, nil
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		eligible := resp.StatusCode == 429 || resp.StatusCode >= 500
+		if eligible {
+			m.markCooldown(provider, fmt.Sprintf("HTTP %d: %s", resp.StatusCode, string(bodyBytes)))
+		}
+		return &itemResult{
+			Success:          false,
+			FallbackEligible: eligible,
+			Error: &ExecuteError{
+				Code:    fmt.Sprintf("http_%d", resp.StatusCode),
+				Message: fmt.Sprintf("upstream returned %d: %s", resp.StatusCode, string(bodyBytes)),
+			},
+		}, nil
+	}
+
+	chatResp, err := adapter.ParseResponse(resp)
+	if err != nil {
+		return &itemResult{
+			Success:          false,
+			FallbackEligible: true,
+			Error: &ExecuteError{
+				Code:    "parse_error",
+				Message: fmt.Sprintf("failed to parse response: %v", err),
+			},
+		}, nil
+	}
+
+	m.db.Providers().ClearCooldown(ctx, provider.ID)
+
+	respData := serializeResponse(chatResp)
 	return &itemResult{
-		Success:  true,
-		Response: map[string]any{"status": "ok", "provider": provider.Provider, "model": item.ModelID},
+		Success: true,
+		Response: respData,
 	}, nil
+}
+
+func (m *ComboManager) markCooldown(provider *db.ProviderConnection, errMsg string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	backoff := 30 * time.Second
+	if provider.BackoffLevel > 0 {
+		backoff = time.Duration(provider.BackoffLevel) * 30 * time.Second
+		if backoff > 10*time.Minute {
+			backoff = 10 * time.Minute
+		}
+	}
+	until := time.Now().Add(backoff).Unix()
+
+	m.db.Providers().MarkCooldown(ctx, provider.ID, until, errMsg)
+}
+
+func convertMessages(msgs []map[string]string) []translator.NormalizedMessage {
+	result := make([]translator.NormalizedMessage, len(msgs))
+	for i, msg := range msgs {
+		result[i] = translator.NormalizedMessage{
+			Role:    msg["role"],
+			Content: msg["content"],
+		}
+	}
+	return result
+}
+
+func serializeResponse(resp *translator.NormalizedChatResponse) map[string]any {
+	data, err := json.Marshal(resp)
+	if err != nil {
+		return map[string]any{"error": "serialization failed"}
+	}
+	var result map[string]any
+	json.Unmarshal(data, &result)
+	return result
 }

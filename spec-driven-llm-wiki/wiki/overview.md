@@ -55,13 +55,23 @@ gorouter/
 │   ├── config/config.go          # Env config
 │   ├── logger/logger.go          # slog wrapper
 │   ├── db/dbmanager.go           # DatabaseManager (JSON/SQLite/PG)
+│   ├── db/sqlite.go              # SQLite driver with schema migration
 │   ├── auth/jwt.go               # JWT token gen/validate
 │   ├── auth/password.go          # bcrypt hash/verify
 │   ├── apikeys/service.go        # API key CRUD service
 │   ├── apikeys/keys.go           # Key generation + hashing
 │   ├── combo/combo.go            # Combo manager + fallback
 │   ├── crypto/crypto.go          # AES-256-GCM encrypt/decrypt
-│   ├── proxy/proxy.go            # HTTP reverse proxy
+│   ├── translator/
+│   │   ├── types.go               # Normalized types + ProviderAdapter
+│   │   └── registry.go            # Thread-safe adapter registry
+│   ├── adapters/
+│   │   ├── init.go                # Auto-registers all adapters
+│   │   ├── openai/                # OpenAI adapter
+│   │   ├── openai_compatible/     # Generic OpenAI-compatible
+│   │   ├── glm/                   # GLM/Zhipu adapter (JWT)
+│   │   └── minimax/               # MiniMax adapter
+│   ├── proxy/proxy.go             # HTTP reverse proxy
 │   ├── streaming/stream.go       # SSE formatting helpers
 │   ├── handlers/
 │   │   ├── admin_apikeys.go      # Admin API key CRUD
@@ -74,7 +84,8 @@ gorouter/
 │   │   │   ├── dashboard.go      # Dashboard stats
 │   │   │   ├── system.go         # System info
 │   │   │   ├── audit.go          # Audit logs
-│   │   │   └── ratelimits.go     # Rate limit admin
+│   │   │   ├── ratelimits.go     # Rate limit admin
+│   │   │   └── providers.go      # Provider CRUD + Test/Enable/Disable
 │   │   ├── v1/
 │   │   │   ├── chat.go           # /v1/chat/completions
 │   │   │   ├── models.go         # /v1/models

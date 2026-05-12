@@ -1197,29 +1197,6 @@ func (r *jsonRateLimitRepo) Delete(ctx context.Context, id string) error {
 	return r.driver.save()
 }
 
-type sqliteDriver struct {
-	db *sql.DB
-}
-
-func newSQLiteDriver(dsn string) (DatabaseManager, error) {
-	return nil, nil
-}
-
-func (s *sqliteDriver) Driver() string            { return "sqlite" }
-func (s *sqliteDriver) Connect() error            { return nil }
-func (s *sqliteDriver) Close() error              { return nil }
-func (s *sqliteDriver) Migrate() error             { return nil }
-func (s *sqliteDriver) Users() UserRepository     { return nil }
-func (s *sqliteDriver) ApiKeys() ApiKeyRepository { return nil }
-func (s *sqliteDriver) Providers() ProviderRepository { return nil }
-func (s *sqliteDriver) Models() ModelRepository   { return nil }
-func (s *sqliteDriver) Combos() ComboRepository    { return nil }
-func (s *sqliteDriver) UsageEvents() UsageRepository { return nil }
-func (s *sqliteDriver) AuditLogs() AuditRepository { return nil }
-func (s *sqliteDriver) Settings() SettingsRepository { return nil }
-func (s *sqliteDriver) RateLimits() RateLimitRepository { return nil }
-func (s *sqliteDriver) Quotas() QuotaRepository          { return nil }
-
 type postgresDriver struct {
 	db *sql.DB
 }

@@ -54,14 +54,8 @@ func NewRateLimiter(cfg *RateLimitConfig) *RateLimiter {
 func (rl *RateLimiter) Middleware() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			userID := r.Context().Value("user_id")
-			if userID == nil {
-				next.ServeHTTP(w, r)
-				return
-			}
-
-			userIDStr, ok := userID.(string)
-			if !ok || userIDStr == "" {
+			userIDStr := getUserIDFromContext(r.Context())
+			if userIDStr == "" {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -274,22 +268,35 @@ func cleanOld(timestamps []int64, cutoff int64) {
 	}
 }
 
+func getUserIDFromContext(ctx context.Context) string {
+	if claims := GetUserClaims(ctx); claims != nil && claims.UserID != "" {
+		return claims.UserID
+	}
+
+	if v := ctx.Value(ApiKeyValidationKey); v != nil {
+		if av, ok := v.(*db.ApiKeyValidation); ok && av.UserID != "" {
+			return av.UserID
+		}
+	}
+
+	if v := ctx.Value(UserContextKey); v != nil {
+		if uc, ok := v.(*UserContext); ok && uc.UserID != "" {
+			return uc.UserID
+		}
+	}
+
+	if v := ctx.Value("user_id"); v != nil {
+		if s, ok := v.(string); ok && s != "" {
+			return s
+		}
+	}
+
+	return ""
+}
+
 func TrackTokenUsage(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		userID := r.Context().Value("user_id")
-		if userID == nil {
-			next.ServeHTTP(w, r)
-			return
-		}
-
-		userIDStr, ok := userID.(string)
-		if !ok || userIDStr == "" {
-			next.ServeHTTP(w, r)
-			return
-		}
-
-		_ = userIDStr
-
+		_ = getUserIDFromContext(r.Context())
 		next.ServeHTTP(w, r)
 	})
 }

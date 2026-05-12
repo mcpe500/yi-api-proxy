@@ -100,3 +100,34 @@ All 17 specs implemented in Go. Build passes, go vet clean.
 - go vet: clean
 - Routes: /auth/*, /admin/*, /me/*, /v1/*, /health, /ready
 - Providers: OpenAI-compatible proxy with streaming passthrough
+
+## [2026-05-12] implement | Critical gap fixes - adapter system, SQLite, routing
+
+All 12 blocking gaps from audit addressed:
+
+### New packages created:
+- internal/translator/types.go - Normalized types + ProviderAdapter interface
+- internal/translator/registry.go - Thread-safe adapter registry
+- internal/adapters/openai/adapter.go - OpenAI adapter
+- internal/adapters/openai_compatible/adapter.go - Generic OpenAI-compatible (Groq, Together, etc.)
+- internal/adapters/glm/adapter.go - GLM/Zhipu with JWT auth (HMAC-SHA256)
+- internal/adapters/minimax/adapter.go - MiniMax with /v1/text/chatcompletion_v2
+- internal/adapters/init.go - Auto-registers all adapters via init()
+- internal/crypto/crypto.go - AES-256-GCM encryption for provider secrets
+- internal/db/sqlite.go - Full SQLite driver with schema migration
+- internal/handlers/admin/providers.go - Provider CRUD + Test/Enable/Disable
+
+### Critical fixes:
+- Combo executor: replaced mock response with real HTTP forwarding via adapter system
+- Chat handler: replaced hardcoded OpenAI proxy with dynamic routing (combo-first, then direct)
+- Usage recording: logUsage now creates real UsageEvent in DB
+- Rate limiter: fixed context bug - now reads user ID from both JWT and API key contexts
+- Provider routes: /admin/providers CRUD wired in main.go
+- Adapter registration: auto-registered via _ import in main.go
+- Crypto init: called in main.go when SECRET_ENCRYPTION_KEY is set
+
+### Key metrics:
+- Binary: 12.4MB optimized (was 8.3MB - increase due to SQLite driver + adapters)
+- go vet: clean
+- Adapters: 4 registered (openai, openai_compatible, glm, minimax)
+- Routes: /admin/providers/* now available

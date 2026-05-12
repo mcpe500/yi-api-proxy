@@ -15,10 +15,12 @@ import (
 	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"
 
+	_ "github.com/gorouter/gorouter/internal/adapters"
 	"github.com/gorouter/gorouter/internal/apikeys"
 	"github.com/gorouter/gorouter/internal/auth"
 	"github.com/gorouter/gorouter/internal/combo"
 	"github.com/gorouter/gorouter/internal/config"
+	"github.com/gorouter/gorouter/internal/crypto"
 	"github.com/gorouter/gorouter/internal/db"
 	"github.com/gorouter/gorouter/internal/handlers"
 	"github.com/gorouter/gorouter/internal/handlers/admin"
@@ -26,7 +28,6 @@ import (
 	"github.com/gorouter/gorouter/internal/handlers/user"
 	"github.com/gorouter/gorouter/internal/logger"
 	"github.com/gorouter/gorouter/internal/middleware"
-	"github.com/gorouter/gorouter/internal/proxy"
 )
 
 const Version = "0.1.0-dev"
@@ -88,6 +89,14 @@ func main() {
 
 	log := logger.New(cfg.LogLevel)
 	log.Info("Starting gorouter", "version", Version)
+
+	if cfg.SecretEncryptionKey != "" {
+		if err := crypto.Init(cfg.SecretEncryptionKey); err != nil {
+			log.Error("Failed to initialize crypto", "error", err)
+			os.Exit(1)
+		}
+		log.Info("Provider encryption initialized")
+	}
 
 	dbManager, err := db.NewDatabaseManager(cfg.NormalizedDriver(), cfg.DatabaseDSN)
 	if err != nil {
@@ -153,6 +162,7 @@ func main() {
 	adminApiKeyHandler := handlers.NewAdminApiKeyHandler(apiKeySvc)
 	rateLimitHandler := admin.NewRateLimitHandler(dbManager)
 	userHandler := admin.NewUserHandler(dbManager)
+	providerHandler := admin.NewProviderHandler(dbManager)
 
 	r.Route("/admin", func(r chi.Router) {
 		r.Use(middleware.RequireAuth(jwtSecret))
@@ -182,6 +192,7 @@ func main() {
 		adminApiKeyHandler.RegisterUserKeyRoutes(r)
 		r.Mount("/rate-limits", rateLimitHandler.Routes())
 		r.Mount("/users", userHandler.Routes())
+		r.Mount("/providers", providerHandler.Routes())
 	})
 
 	// --- User routes (/me/*) ---
@@ -201,13 +212,9 @@ func main() {
 	})
 
 	// --- V1 API routes ---
-	p := proxy.NewProxy(proxy.ProxyConfig{
-		BaseURL: "https://api.openai.com",
-		Timeout: 120 * time.Second,
-		APIKey:  "",
-	})
 	chatHandler := &v1.ChatHandler{
-		Proxy:  p,
+		DB:     dbManager,
+		Combos: comboManager,
 		Logger: log,
 	}
 	modelsHandler := v1.NewModelsHandler(dbManager)
