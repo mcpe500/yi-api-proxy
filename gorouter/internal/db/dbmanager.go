@@ -222,11 +222,12 @@ type ProviderConnection struct {
 	Provider        string     `json:"provider"`
 	Name            string     `json:"name"`
 	AuthType        string     `json:"auth_type"`
-	EncryptedSecret []byte      `json:"encrypted_secret,omitempty"`
+	EncryptedSecret []byte     `json:"encrypted_secret,omitempty"`
 	BaseURL         string     `json:"base_url,omitempty"`
 	Priority        int        `json:"priority"`
 	Weight          int        `json:"weight"`
 	Status          string     `json:"status"`
+	LastLatencyMs   int        `json:"last_latency_ms"`
 	CooldownUntil   *time.Time `json:"cooldown_until,omitempty"`
 	LastError       string     `json:"last_error,omitempty"`
 	LastErrorAt     *time.Time `json:"last_error_at,omitempty"`
@@ -1228,7 +1229,7 @@ type postgresDriver struct {
 }
 
 func newPostgresDriver(dsn string) (DatabaseManager, error) {
-	return nil, nil
+	return newPgDriver(dsn)
 }
 
 func (p *postgresDriver) Driver() string            { return "postgres" }

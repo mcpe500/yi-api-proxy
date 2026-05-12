@@ -121,6 +121,7 @@ func (d *sqliteDriver) migrate() error {
 			priority INTEGER NOT NULL DEFAULT 0,
 			weight INTEGER NOT NULL DEFAULT 100,
 			status TEXT NOT NULL DEFAULT 'active',
+			last_latency_ms INTEGER NOT NULL DEFAULT 0,
 			cooldown_until DATETIME,
 			last_error TEXT NOT NULL DEFAULT '',
 			last_error_at DATETIME,
@@ -537,10 +538,10 @@ func (r *sqliteApiKeyRepo) scanApiKeys(rows *sql.Rows) ([]*ApiKey, error) {
 
 func (r *sqliteProviderRepo) Create(ctx context.Context, conn *ProviderConnection) error {
 	_, err := r.driver.db.ExecContext(ctx,
-		`INSERT INTO providers (id, provider, name, auth_type, encrypted_secret, base_url, priority, weight, status, cooldown_until, last_error, last_error_at, backoff_level, created_by, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO providers (id, provider, name, auth_type, encrypted_secret, base_url, priority, weight, status, last_latency_ms, cooldown_until, last_error, last_error_at, backoff_level, created_by, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		conn.ID, conn.Provider, conn.Name, conn.AuthType, conn.EncryptedSecret,
-		conn.BaseURL, conn.Priority, conn.Weight, conn.Status,
+		conn.BaseURL, conn.Priority, conn.Weight, conn.Status, conn.LastLatencyMs,
 		conn.CooldownUntil, conn.LastError, conn.LastErrorAt, conn.BackoffLevel,
 		conn.CreatedBy, conn.CreatedAt, conn.UpdatedAt)
 	return err
@@ -548,11 +549,11 @@ func (r *sqliteProviderRepo) Create(ctx context.Context, conn *ProviderConnectio
 
 func (r *sqliteProviderRepo) FindByID(ctx context.Context, id string) (*ProviderConnection, error) {
 	row := r.driver.db.QueryRowContext(ctx,
-		`SELECT id, provider, name, auth_type, encrypted_secret, base_url, priority, weight, status, cooldown_until, last_error, last_error_at, backoff_level, created_by, created_at, updated_at
+		`SELECT id, provider, name, auth_type, encrypted_secret, base_url, priority, weight, status, last_latency_ms, cooldown_until, last_error, last_error_at, backoff_level, created_by, created_at, updated_at
 		 FROM providers WHERE id = ?`, id)
 	conn := &ProviderConnection{}
 	err := row.Scan(&conn.ID, &conn.Provider, &conn.Name, &conn.AuthType, &conn.EncryptedSecret,
-		&conn.BaseURL, &conn.Priority, &conn.Weight, &conn.Status,
+		&conn.BaseURL, &conn.Priority, &conn.Weight, &conn.Status, &conn.LastLatencyMs,
 		&conn.CooldownUntil, &conn.LastError, &conn.LastErrorAt, &conn.BackoffLevel,
 		&conn.CreatedBy, &conn.CreatedAt, &conn.UpdatedAt)
 	if err == sql.ErrNoRows {
@@ -563,7 +564,7 @@ func (r *sqliteProviderRepo) FindByID(ctx context.Context, id string) (*Provider
 
 func (r *sqliteProviderRepo) FindByProvider(ctx context.Context, provider string) ([]*ProviderConnection, error) {
 	rows, err := r.driver.db.QueryContext(ctx,
-		`SELECT id, provider, name, auth_type, encrypted_secret, base_url, priority, weight, status, cooldown_until, last_error, last_error_at, backoff_level, created_by, created_at, updated_at
+		`SELECT id, provider, name, auth_type, encrypted_secret, base_url, priority, weight, status, last_latency_ms, cooldown_until, last_error, last_error_at, backoff_level, created_by, created_at, updated_at
 		 FROM providers WHERE provider = ?`, provider)
 	if err != nil {
 		return nil, err
@@ -574,7 +575,7 @@ func (r *sqliteProviderRepo) FindByProvider(ctx context.Context, provider string
 
 func (r *sqliteProviderRepo) List(ctx context.Context) ([]*ProviderConnection, error) {
 	rows, err := r.driver.db.QueryContext(ctx,
-		`SELECT id, provider, name, auth_type, encrypted_secret, base_url, priority, weight, status, cooldown_until, last_error, last_error_at, backoff_level, created_by, created_at, updated_at
+		`SELECT id, provider, name, auth_type, encrypted_secret, base_url, priority, weight, status, last_latency_ms, cooldown_until, last_error, last_error_at, backoff_level, created_by, created_at, updated_at
 		 FROM providers ORDER BY priority DESC, name`)
 	if err != nil {
 		return nil, err
@@ -585,9 +586,9 @@ func (r *sqliteProviderRepo) List(ctx context.Context) ([]*ProviderConnection, e
 
 func (r *sqliteProviderRepo) Update(ctx context.Context, conn *ProviderConnection) error {
 	_, err := r.driver.db.ExecContext(ctx,
-		`UPDATE providers SET name=?, base_url=?, priority=?, weight=?, status=?, encrypted_secret=?, cooldown_until=?, last_error=?, last_error_at=?, backoff_level=?, updated_at=?
+		`UPDATE providers SET name=?, base_url=?, priority=?, weight=?, status=?, last_latency_ms=?, encrypted_secret=?, cooldown_until=?, last_error=?, last_error_at=?, backoff_level=?, updated_at=?
 		 WHERE id = ?`,
-		conn.Name, conn.BaseURL, conn.Priority, conn.Weight, conn.Status,
+		conn.Name, conn.BaseURL, conn.Priority, conn.Weight, conn.Status, conn.LastLatencyMs,
 		conn.EncryptedSecret, conn.CooldownUntil, conn.LastError, conn.LastErrorAt,
 		conn.BackoffLevel, conn.UpdatedAt, conn.ID)
 	return err
@@ -626,7 +627,7 @@ func (r *sqliteProviderRepo) scanProviders(rows *sql.Rows) ([]*ProviderConnectio
 	for rows.Next() {
 		conn := &ProviderConnection{}
 		err := rows.Scan(&conn.ID, &conn.Provider, &conn.Name, &conn.AuthType, &conn.EncryptedSecret,
-			&conn.BaseURL, &conn.Priority, &conn.Weight, &conn.Status,
+			&conn.BaseURL, &conn.Priority, &conn.Weight, &conn.Status, &conn.LastLatencyMs,
 			&conn.CooldownUntil, &conn.LastError, &conn.LastErrorAt, &conn.BackoffLevel,
 			&conn.CreatedBy, &conn.CreatedAt, &conn.UpdatedAt)
 		if err != nil {

@@ -13,6 +13,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/cors"
 	"github.com/google/uuid"
 
 	_ "github.com/gorouter/gorouter/internal/adapters"
@@ -28,7 +29,7 @@ import (
 	v1 "github.com/gorouter/gorouter/internal/handlers/v1"
 	"github.com/gorouter/gorouter/internal/handlers/user"
 	"github.com/gorouter/gorouter/internal/logger"
-	"github.com/gorouter/gorouter/internal/middleware"
+	ourmw "github.com/gorouter/gorouter/internal/middleware"
 )
 
 const Version = "0.1.0-dev"
@@ -139,6 +140,14 @@ func main() {
 	r.Use(chimw.RealIP)
 	r.Use(chimw.Recoverer)
 	r.Use(chimw.CleanPath)
+	r.Use(cors.Handler(cors.Options{
+		AllowedOrigins: []string{"*"},
+		AllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
+		AllowedHeaders: []string{"*"},
+		ExposedHeaders: []string{"X-Request-ID", "X-RateLimit-Remaining"},
+		AllowCredentials: true,
+		MaxAge: 86400,
+	}))
 
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -168,9 +177,9 @@ func main() {
 	providerHandler := admin.NewProviderHandler(dbManager, auditLogger)
 
 	r.Route("/admin", func(r chi.Router) {
-		r.Use(middleware.AuditContextMiddleware())
-		r.Use(middleware.RequireAuth(jwtSecret))
-		r.Use(middleware.RequireAdmin())
+		r.Use(ourmw.AuditContextMiddleware())
+		r.Use(ourmw.RequireAuth(jwtSecret))
+		r.Use(ourmw.RequireAdmin())
 
 		r.Route("/dashboard", func(r chi.Router) {
 			r.Get("/stats", dashboardHandler.Stats)
@@ -207,7 +216,7 @@ func main() {
 	r.Route("/me", func(r chi.Router) {
 		userCombosHandler.Register(r)
 		r.Route("/usage", func(r chi.Router) {
-			r.Use(middleware.RequireAuth(jwtSecret))
+			r.Use(ourmw.RequireAuth(jwtSecret))
 			r.Get("/", usageHandler.History)
 			r.Get("/summary", usageHandler.Summary)
 		})
@@ -224,7 +233,7 @@ func main() {
 	modelsHandler := v1.NewModelsHandler(dbManager)
 	embeddingsHandler := v1.NewEmbeddingHandler(dbManager, "")
 
-	rateLimiter := middleware.NewRateLimiter(&middleware.RateLimitConfig{
+	rateLimiter := ourmw.NewRateLimiter(&ourmw.RateLimitConfig{
 		DB:       dbManager,
 		CacheTTL: 5 * time.Minute,
 		DefaultRPM: 60,
@@ -233,7 +242,7 @@ func main() {
 	})
 
 	r.Route("/v1", func(r chi.Router) {
-		r.Use(middleware.RequireAPIKey(apiKeySvc))
+		r.Use(ourmw.RequireAPIKey(apiKeySvc))
 		r.Use(rateLimiter.Middleware())
 
 		r.Post("/chat/completions", chatHandler.ServeHTTP)

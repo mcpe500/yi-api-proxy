@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gorouter/gorouter/internal/db"
+	"github.com/gorouter/gorouter/internal/middleware"
 )
 
 type OpenAIModel struct {
@@ -39,8 +40,11 @@ func (h *ModelsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	models := make([]OpenAIModel, 0, len(dbModels))
-	for _, m := range dbModels {
+	validation, _ := r.Context().Value(middleware.ApiKeyValidationKey).(*db.ApiKeyValidation)
+	allowedModels := filterModelsByScope(dbModels, validation)
+
+	models := make([]OpenAIModel, 0, len(allowedModels))
+	for _, m := range allowedModels {
 		models = append(models, OpenAIModel{
 			ID:      m.ModelName,
 			Object:  "model",
@@ -63,6 +67,46 @@ func (h *ModelsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(response)
+}
+
+func filterModelsByScope(models []*db.Model, validation *db.ApiKeyValidation) []*db.Model {
+	if validation == nil || len(validation.Scopes) == 0 {
+		return models
+	}
+
+	var result []*db.Model
+	for _, m := range models {
+		if modelMatchesScope(m, validation.Scopes) {
+			result = append(result, m)
+		}
+	}
+	return result
+}
+
+func modelMatchesScope(m *db.Model, scopes []string) bool {
+	for _, scope := range scopes {
+		switch scope {
+		case "chat", "completion":
+			if m.Mode == "chat" || m.Mode == "completion" {
+				return true
+			}
+		case "embedding":
+			for _, cap := range m.Capabilities {
+				if cap == "embeddings" || cap == "embedding" {
+					return true
+				}
+			}
+		case "image":
+			for _, cap := range m.Capabilities {
+				if cap == "vision" || cap == "image" {
+					return true
+				}
+			}
+		case "*":
+			return true
+		}
+	}
+	return false
 }
 
 func HandleModels(w http.ResponseWriter, r *http.Request) {
