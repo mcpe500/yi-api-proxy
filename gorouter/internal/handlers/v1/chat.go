@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/gorouter/gorouter/internal/auth"
 	"github.com/gorouter/gorouter/internal/combo"
 	"github.com/gorouter/gorouter/internal/crypto"
 	"github.com/gorouter/gorouter/internal/db"
@@ -58,10 +59,21 @@ type Usage struct {
 }
 
 type ChatHandler struct {
-	DB     db.DatabaseManager
-	Combos *combo.ComboManager
-	Logger *slog.Logger
-	Router *routing.Router
+	DB        db.DatabaseManager
+	Combos    *combo.ComboManager
+	Logger    *slog.Logger
+	Router    *routing.Router
+	Refresher *auth.TokenRefresher
+}
+
+func NewChatHandler(db db.DatabaseManager, cm *combo.ComboManager, log *slog.Logger, router *routing.Router, refresher *auth.TokenRefresher) *ChatHandler {
+	return &ChatHandler{
+		DB:        db,
+		Combos:    cm,
+		Logger:    log,
+		Router:    router,
+		Refresher: refresher,
+	}
 }
 
 func (h *ChatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -240,7 +252,12 @@ func (h *ChatHandler) executeDirectRequest(ctx context.Context, w http.ResponseW
 			continue
 		}
 
-		decryptedKey, err := crypto.Decrypt(string(providerConn.EncryptedSecret))
+		var decryptedKey string
+		if h.Refresher != nil {
+			decryptedKey, err = h.Refresher.GetValidToken(ctx, providerConn)
+		} else {
+			decryptedKey, err = crypto.Decrypt(string(providerConn.EncryptedSecret))
+		}
 		if err != nil {
 			lastErr = "failed to decrypt provider secret"
 			continue

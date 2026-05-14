@@ -185,3 +185,43 @@ Fixed critical regressions and runtime bugs identified in subagent fleet audit:
 - Tests: basic coverage added
 - Dead code: -250 lines removed
 - Security: P0/P1 gaps closed
+
+## [2026-05-14] p3 | Architectural Features Implementation
+
+Implemented all remaining P3 architectural features:
+
+### Prometheus Metrics
+- Added `prometheus/client_golang` dependency
+- Created `internal/metrics/metrics.go` with 5 collectors: http_requests_total, http_request_duration_seconds, http_active_requests, provider_requests_total, provider_latency_seconds
+- Exposed `/metrics` endpoint with Go runtime metrics
+
+### True Responses API
+- Full OpenAI Responses API schema: input parsing (string/array/messages), output conversion
+- Proper response conversion from upstream chat completions to Responses format
+- Streaming with context cancellation and chunk conversion
+- Usage tracking in streaming mode
+
+### True Messages API
+- Full Anthropic Messages API schema: system prompt parsing, tool support, stop_sequences
+- Proper response conversion from upstream chat completions to Anthropic Messages format
+- Streaming with Anthropic SSE event format (message_start, content_block_delta, message_stop, etc.)
+- Error handling with Anthropic error schema
+
+### Images/Audio/Web Search
+- `/v1/images/generations` — transparent proxy to upstream provider
+- `/v1/audio/speech` — TTS transparent proxy
+- `/v1/audio/transcriptions` — STT transparent proxy
+- `/v1/search` + `/v1/web/search` — web search transparent proxy
+
+### OAuth Provider Support
+- OAuth fields added to ProviderConnection (client_id, client_secret, token_url, refresh_token, access_token, expires_at, scopes)
+- `internal/auth/oauth.go` TokenRefresher service with automatic token refresh
+- Integrated into ChatHandler with fallback to static API keys
+- Wired in main.go startup
+
+### Key metrics:
+- Build: Success
+- Vet: No issues
+- Tests: 5 passed
+- New endpoints: 8 (images, audio×2, search×2, metrics, responses streaming, messages streaming)
+- New files: images.go, audio.go, search.go, oauth.go, metrics.go

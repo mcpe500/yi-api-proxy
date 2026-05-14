@@ -17,10 +17,16 @@ Gateway adalah OpenAI-compatible API endpoint utama yang melayani request dari u
 | `/v1/chat/completions` | POST | Chat completions (streaming + non-streaming) | IMPLEMENTED |
 | `/v1/models` | GET | Model list | IMPLEMENTED |
 | `/v1/embeddings` | POST | Embeddings | IMPLEMENTED |
-| `/v1/responses` | POST | OpenAI Responses API | IMPLEMENTED (Basic) |
-| `/v1/messages` | POST | Claude Messages API | IMPLEMENTED (Basic) |
+| `/v1/responses` | POST | OpenAI Responses API (schema conversion + streaming) | IMPLEMENTED |
+| `/v1/messages` | POST | Claude Messages API (schema conversion + Anthropic SSE) | IMPLEMENTED |
+| `/v1/images/generations` | POST | OpenAI-compatible image generation proxy | IMPLEMENTED |
+| `/v1/audio/speech` | POST | OpenAI-compatible text-to-speech proxy | IMPLEMENTED |
+| `/v1/audio/transcriptions` | POST | OpenAI-compatible transcription proxy | IMPLEMENTED |
+| `/v1/search` | POST | Web search proxy | IMPLEMENTED |
+| `/v1/web/search` | POST | Web search proxy alias | IMPLEMENTED |
 | `/health` | GET | Health check | IMPLEMENTED |
 | `/ready` | GET | Readiness check | IMPLEMENTED |
+| `/metrics` | GET | Prometheus metrics endpoint | IMPLEMENTED |
 
 ## Request Pipeline
 

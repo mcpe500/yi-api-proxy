@@ -28,9 +28,12 @@ import (
 	v1 "github.com/gorouter/gorouter/internal/handlers/v1"
 	"github.com/gorouter/gorouter/internal/handlers/user"
 	"github.com/gorouter/gorouter/internal/logger"
+	_ "github.com/gorouter/gorouter/internal/metrics"
 	ourmw "github.com/gorouter/gorouter/internal/middleware"
 	"github.com/gorouter/gorouter/internal/provider"
 	"github.com/gorouter/gorouter/internal/routing"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 const Version = "0.1.0-dev"
@@ -176,6 +179,8 @@ func main() {
 		w.Write([]byte(fmt.Sprintf(`{"ready":%t}`, ready)))
 	})
 
+	r.Handle("/metrics", promhttp.Handler())
+
 	// --- Auth routes ---
 	authHandler := admin.NewAuthHandler(dbManager.Users(), jwtSecret, auditLogger)
 	r.Route("/auth", func(r chi.Router) {
@@ -243,16 +248,16 @@ func main() {
 	router := routing.NewRouter(dbManager, routing.Strategy(cfg.RoutingStrategy))
 	log.Info("Routing strategy", "strategy", cfg.RoutingStrategy)
 
-	chatHandler := &v1.ChatHandler{
-		DB:     dbManager,
-		Combos: comboManager,
-		Logger: log,
-		Router: router,
-	}
+	tokenRefresher := auth.NewTokenRefresher(dbManager)
+
+	chatHandler := v1.NewChatHandler(dbManager, comboManager, log, router, tokenRefresher)
 	responsesHandler := v1.NewResponsesHandler(dbManager, comboManager, log)
 	messagesHandler := v1.NewMessagesHandler(dbManager, comboManager, log)
 	modelsHandler := v1.NewModelsHandler(dbManager)
 	embeddingsHandler := v1.NewEmbeddingHandler(dbManager, "")
+	imagesHandler := v1.NewImagesHandler(dbManager, log)
+	audioHandler := v1.NewAudioHandler(dbManager, log)
+	searchHandler := v1.NewSearchHandler(dbManager, log)
 
 	rateLimiter := ourmw.NewRateLimiter(&ourmw.RateLimitConfig{
 		DB:       dbManager,
@@ -273,6 +278,11 @@ func main() {
 		r.Post("/messages", messagesHandler.ServeHTTP)
 		r.Get("/models", modelsHandler.ServeHTTP)
 		r.Post("/embeddings", embeddingsHandler.ServeHTTP)
+		r.Post("/images/generations", imagesHandler.ServeHTTP)
+		r.Post("/audio/speech", audioHandler.ServeHTTP)
+		r.Post("/audio/transcriptions", audioHandler.ServeHTTP)
+		r.Post("/search", searchHandler.ServeHTTP)
+		r.Post("/web/search", searchHandler.ServeHTTP)
 	})
 
 	// --- SPA fallback ---

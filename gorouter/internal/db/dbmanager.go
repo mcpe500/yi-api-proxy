@@ -231,10 +231,17 @@ type ProviderConnection struct {
 	CooldownUntil   *time.Time `json:"cooldown_until,omitempty"`
 	LastError       string     `json:"last_error,omitempty"`
 	LastErrorAt     *time.Time `json:"last_error_at,omitempty"`
-	BackoffLevel    int        `json:"backoff_level"`
-	CreatedBy       string     `json:"created_by"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
+	BackoffLevel       int        `json:"backoff_level"`
+	OAuthClientID      string     `json:"oauth_client_id,omitempty"`
+	OAuthClientSecret  string     `json:"oauth_client_secret,omitempty"`
+	OAuthTokenURL      string     `json:"oauth_token_url,omitempty"`
+	OAuthRefreshToken  string     `json:"oauth_refresh_token,omitempty"`
+	OAuthAccessToken   string     `json:"oauth_access_token,omitempty"`
+	OAuthExpiresAt     int64      `json:"oauth_expires_at,omitempty"`
+	OAuthScopes        string     `json:"oauth_scopes,omitempty"`
+	CreatedBy          string     `json:"created_by"`
+	CreatedAt          time.Time  `json:"created_at"`
+	UpdatedAt          time.Time  `json:"updated_at"`
 }
 
 type Model struct {
