@@ -2,7 +2,6 @@ package db
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -15,6 +14,7 @@ type DatabaseManager interface {
 	Connect() error
 	Close() error
 	Migrate() error
+	Ping() error
 
 	Users() UserRepository
 	ApiKeys() ApiKeyRepository
@@ -36,7 +36,7 @@ func NewDatabaseManager(driver, dsn string) (DatabaseManager, error) {
 	case "sqlite":
 		return newSQLiteDriver(dsn)
 	case "postgres", "postgresql":
-		return newPostgresDriver(dsn)
+		return newPgDriver(dsn)
 	default:
 		return nil, fmt.Errorf("unsupported driver: %s", driver)
 	}
@@ -162,12 +162,12 @@ type ModelAliasRepository interface {
 }
 
 type AuditFilter struct {
-	ActorID  string
-	Action   string
-	From     int64
-	To       int64
-	Limit    int
-	Offset   int
+	ActorID string
+	Action  string
+	From    int64
+	To      int64
+	Limit   int
+	Offset  int
 }
 
 type UsageSummary struct {
@@ -182,12 +182,12 @@ type UsageSummary struct {
 }
 
 type Settings struct {
-	RequireLogin           bool
-	RequireAPIKey          bool
-	EnableRequestBodyLog   bool
-	UsageRetentionDays     int
+	RequireLogin            bool
+	RequireAPIKey           bool
+	EnableRequestBodyLog    bool
+	UsageRetentionDays      int
 	RequestLogRetentionDays int
-	AuditLogRetentionDays  int
+	AuditLogRetentionDays   int
 }
 
 type User struct {
@@ -262,16 +262,16 @@ type Model struct {
 }
 
 type Combo struct {
-	ID          string      `json:"id"`
-	Name        string      `json:"name"`
-	Description string      `json:"description,omitempty"`
-	UserID      string      `json:"user_id"`
-	Strategy    string      `json:"strategy"`
-	IsActive    bool        `json:"is_active"`
+	ID          string       `json:"id"`
+	Name        string       `json:"name"`
+	Description string       `json:"description,omitempty"`
+	UserID      string       `json:"user_id"`
+	Strategy    string       `json:"strategy"`
+	IsActive    bool         `json:"is_active"`
 	Items       []*ComboItem `json:"items"`
-	CreatedBy   string      `json:"created_by"`
-	CreatedAt   time.Time   `json:"created_at"`
-	UpdatedAt   time.Time   `json:"updated_at"`
+	CreatedBy   string       `json:"created_by"`
+	CreatedAt   time.Time    `json:"created_at"`
+	UpdatedAt   time.Time    `json:"updated_at"`
 }
 
 type ComboItem struct {
@@ -351,15 +351,15 @@ type RateLimit struct {
 }
 
 type Quota struct {
-	ID               string    `json:"id"`
-	UserID           string    `json:"user_id"`
-	MonthlyTokenCap  int64     `json:"monthly_token_cap"`
-	MonthlyCostCap   float64   `json:"monthly_cost_cap"`
-	UsedTokens       int64     `json:"used_tokens"`
-	UsedCost         float64   `json:"used_cost"`
-	ResetAt          time.Time `json:"reset_at"`
-	CreatedAt        time.Time `json:"created_at"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	ID              string    `json:"id"`
+	UserID          string    `json:"user_id"`
+	MonthlyTokenCap int64     `json:"monthly_token_cap"`
+	MonthlyCostCap  float64   `json:"monthly_cost_cap"`
+	UsedTokens      int64     `json:"used_tokens"`
+	UsedCost        float64   `json:"used_cost"`
+	ResetAt         time.Time `json:"reset_at"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 type ModelAlias struct {
@@ -389,6 +389,8 @@ type jsonStore struct {
 	AuditLogs   map[string]*AuditLog           `json:"audit_logs,omitempty"`
 	RateLimits  map[string]*RateLimit          `json:"rate_limits,omitempty"`
 	Aliases     map[string]*ModelAlias         `json:"aliases,omitempty"`
+	Quotas      map[string]*Quota              `json:"quotas,omitempty"`
+	Settings    *Settings                      `json:"settings,omitempty"`
 }
 
 type jsonDB struct {
@@ -402,6 +404,7 @@ type jsonDB struct {
 	audit      *jsonAuditRepo
 	settings   *jsonSettingsRepo
 	rateLimits *jsonRateLimitRepo
+	quotas     *jsonQuotaRepo
 	aliases    *jsonAliasRepo
 }
 
@@ -427,26 +430,28 @@ func newJSONDriver(dsn string) (DatabaseManager, error) {
 	db.audit = newJsonAuditRepo(j)
 	db.settings = newJsonSettingsRepo(j)
 	db.rateLimits = newJsonRateLimitRepo(j)
+	db.quotas = newJsonQuotaRepo(j)
 	db.aliases = newJsonAliasRepo(j)
 
 	return db, nil
 }
 
-func (db *jsonDB) Driver() string   { return "json" }
-func (db *jsonDB) Connect() error   { return nil }
-func (db *jsonDB) Close() error     { return db.jsonDriver.save() }
-func (db *jsonDB) Migrate() error   { return nil }
+func (db *jsonDB) Driver() string { return "json" }
+func (db *jsonDB) Connect() error { return nil }
+func (db *jsonDB) Ping() error    { return nil }
+func (db *jsonDB) Close() error   { return db.jsonDriver.save() }
+func (db *jsonDB) Migrate() error { return nil }
 
-func (db *jsonDB) Users() UserRepository     { return db.users }
-func (db *jsonDB) ApiKeys() ApiKeyRepository { return db.apiKeys }
-func (db *jsonDB) Providers() ProviderRepository { return db.providers }
-func (db *jsonDB) Models() ModelRepository   { return db.models }
-func (db *jsonDB) Combos() ComboRepository   { return db.combos }
-func (db *jsonDB) UsageEvents() UsageRepository { return db.usage }
-func (db *jsonDB) AuditLogs() AuditRepository { return db.audit }
-func (db *jsonDB) Settings() SettingsRepository { return db.settings }
+func (db *jsonDB) Users() UserRepository           { return db.users }
+func (db *jsonDB) ApiKeys() ApiKeyRepository       { return db.apiKeys }
+func (db *jsonDB) Providers() ProviderRepository   { return db.providers }
+func (db *jsonDB) Models() ModelRepository         { return db.models }
+func (db *jsonDB) Combos() ComboRepository         { return db.combos }
+func (db *jsonDB) UsageEvents() UsageRepository    { return db.usage }
+func (db *jsonDB) AuditLogs() AuditRepository      { return db.audit }
+func (db *jsonDB) Settings() SettingsRepository    { return db.settings }
 func (db *jsonDB) RateLimits() RateLimitRepository { return db.rateLimits }
-func (db *jsonDB) Quotas() QuotaRepository          { return nil }
+func (db *jsonDB) Quotas() QuotaRepository         { return db.quotas }
 func (db *jsonDB) Aliases() ModelAliasRepository   { return db.aliases }
 
 func (j *jsonDriver) save() error {
@@ -681,15 +686,15 @@ func (r *jsonApiKeyRepo) Revoke(ctx context.Context, id string) error {
 }
 
 func (r *jsonApiKeyRepo) RevokeAllForUser(ctx context.Context, userID string) error {
-	keys, _ := r.FindByUserID(ctx, userID)
+	store := r.driver.load()
 	now := time.Now()
-	for _, k := range keys {
-		if k.Status == "active" {
+	for _, k := range store.ApiKeys {
+		if k.UserID == userID && k.Status == "active" {
 			k.Status = "revoked"
 			k.RevokedAt = &now
 		}
 	}
-	return nil
+	return r.driver.save()
 }
 
 func (r *jsonApiKeyRepo) List(ctx context.Context) ([]*ApiKey, error) {
@@ -1218,35 +1223,92 @@ func (r *jsonRateLimitRepo) Update(ctx context.Context, rl *RateLimit) error {
 func (r *jsonRateLimitRepo) Delete(ctx context.Context, id string) error {
 	store := r.driver.load()
 	delete(store.RateLimits, id)
-	r.driver.mu.Lock()
-	r.driver.store.RateLimits = store.RateLimits
-	r.driver.mu.Unlock()
 	return r.driver.save()
 }
 
-type postgresDriver struct {
-	db *sql.DB
+type jsonQuotaRepo struct {
+	driver *jsonDriver
 }
 
-func newPostgresDriver(dsn string) (DatabaseManager, error) {
-	return newPgDriver(dsn)
+func newJsonQuotaRepo(d *jsonDriver) *jsonQuotaRepo { return &jsonQuotaRepo{driver: d} }
+
+func (r *jsonQuotaRepo) init() {
+	store := r.driver.load()
+	if store.Quotas == nil {
+		store.Quotas = make(map[string]*Quota)
+	}
 }
 
-func (p *postgresDriver) Driver() string            { return "postgres" }
-func (p *postgresDriver) Connect() error            { return nil }
-func (p *postgresDriver) Close() error              { return nil }
-func (p *postgresDriver) Migrate() error            { return nil }
-func (p *postgresDriver) Users() UserRepository     { return nil }
-func (p *postgresDriver) ApiKeys() ApiKeyRepository { return nil }
-func (p *postgresDriver) Providers() ProviderRepository { return nil }
-func (p *postgresDriver) Models() ModelRepository   { return nil }
-func (p *postgresDriver) Combos() ComboRepository   { return nil }
-func (p *postgresDriver) UsageEvents() UsageRepository { return nil }
-func (p *postgresDriver) AuditLogs() AuditRepository { return nil }
-func (p *postgresDriver) Settings() SettingsRepository { return nil }
-func (p *postgresDriver) RateLimits() RateLimitRepository { return nil }
-func (p *postgresDriver) Quotas() QuotaRepository          { return nil }
-func (p *postgresDriver) Aliases() ModelAliasRepository   { return nil }
+func (r *jsonQuotaRepo) Create(ctx context.Context, quota *Quota) error {
+	r.init()
+	store := r.driver.load()
+	store.Quotas[quota.ID] = quota
+	return r.driver.save()
+}
+
+func (r *jsonQuotaRepo) FindByID(ctx context.Context, id string) (*Quota, error) {
+	r.init()
+	store := r.driver.load()
+	return store.Quotas[id], nil
+}
+
+func (r *jsonQuotaRepo) FindByUserID(ctx context.Context, userID string) (*Quota, error) {
+	r.init()
+	store := r.driver.load()
+	for _, q := range store.Quotas {
+		if q.UserID == userID {
+			return q, nil
+		}
+	}
+	return nil, nil
+}
+
+func (r *jsonQuotaRepo) List(ctx context.Context) ([]*Quota, error) {
+	r.init()
+	store := r.driver.load()
+	var result []*Quota
+	for _, q := range store.Quotas {
+		result = append(result, q)
+	}
+	return result, nil
+}
+
+func (r *jsonQuotaRepo) Update(ctx context.Context, quota *Quota) error {
+	r.init()
+	store := r.driver.load()
+	store.Quotas[quota.ID] = quota
+	return r.driver.save()
+}
+
+func (r *jsonQuotaRepo) IncrementUsage(ctx context.Context, userID string, tokens int64, cost float64) error {
+	q, err := r.FindByUserID(ctx, userID)
+	if err != nil || q == nil {
+		return err
+	}
+	q.UsedTokens += tokens
+	q.UsedCost += cost
+	q.UpdatedAt = time.Now()
+	return r.Update(ctx, q)
+}
+
+func (r *jsonQuotaRepo) ResetMonthly(ctx context.Context, userID string) error {
+	q, err := r.FindByUserID(ctx, userID)
+	if err != nil || q == nil {
+		return err
+	}
+	q.UsedTokens = 0
+	q.UsedCost = 0
+	q.ResetAt = time.Now()
+	q.UpdatedAt = time.Now()
+	return r.Update(ctx, q)
+}
+
+func (r *jsonQuotaRepo) Delete(ctx context.Context, id string) error {
+	r.init()
+	store := r.driver.load()
+	delete(store.Quotas, id)
+	return r.driver.save()
+}
 
 type jsonAliasRepo struct {
 	driver *jsonDriver

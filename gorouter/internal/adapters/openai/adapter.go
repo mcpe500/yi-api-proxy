@@ -40,8 +40,23 @@ func (a *OpenAIAdapter) TranslateRequest(req *translator.NormalizedChatRequest, 
 	if req.TopP != nil {
 		body["top_p"] = *req.TopP
 	}
+	if req.FrequencyPenalty != nil {
+		body["frequency_penalty"] = *req.FrequencyPenalty
+	}
+	if req.PresencePenalty != nil {
+		body["presence_penalty"] = *req.PresencePenalty
+	}
 	if req.Stop != nil {
 		body["stop"] = req.Stop
+	}
+	if req.N != nil {
+		body["n"] = *req.N
+	}
+	if req.Logprobs != nil {
+		body["logprobs"] = *req.Logprobs
+	}
+	if req.TopLogprobs != nil {
+		body["top_logprobs"] = *req.TopLogprobs
 	}
 	if req.Tools != nil {
 		body["tools"] = req.Tools
@@ -126,7 +141,9 @@ func (a *OpenAIAdapter) ParseEmbeddingResponse(resp *http.Response) (interface{}
 		return nil, err
 	}
 	var result interface{}
-	json.Unmarshal(body, &result)
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse embedding response: %w", err)
+	}
 	return result, nil
 }
 

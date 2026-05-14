@@ -116,9 +116,6 @@ func (h *ChatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ChatHandler) handleStreaming(ctx context.Context, w http.ResponseWriter, req *ChatRequest, requestID string, startTime time.Time) {
-	streaming.WriteSSEHeaders(w)
-	w.WriteHeader(http.StatusOK)
-
 	ctx = context.WithValue(ctx, "request_id", requestID)
 
 	finalModel := req.Model
@@ -127,10 +124,16 @@ func (h *ChatHandler) handleStreaming(ctx context.Context, w http.ResponseWriter
 
 	comboResult, comboErr := h.tryComboExecution(ctx, req)
 	if comboErr == nil && comboResult != nil && comboResult.Success {
-		if flusher, ok := w.(http.Flusher); ok {
+		streaming.WriteSSEHeaders(w)
+		w.WriteHeader(http.StatusOK)
+		if content, ok := comboResult.Response["content"].(string); ok {
+			w.Write(streaming.FormatChunk(generateID("chunk"), comboResult.Model, content, time.Now().Unix()))
+		} else {
 			respData, _ := json.Marshal(comboResult.Response)
-			w.Write(respData)
-			w.Write([]byte("\n\n"))
+			w.Write([]byte(fmt.Sprintf("data: %s\n\n", string(respData))))
+		}
+		w.Write(streaming.FormatDone())
+		if flusher, ok := w.(http.Flusher); ok {
 			flusher.Flush()
 		}
 		if model, ok := comboResult.Response["model"].(string); ok {
@@ -282,7 +285,7 @@ func (h *ChatHandler) executeDirectRequest(ctx context.Context, w http.ResponseW
 		h.updateProviderLatency(context.Background(), providerConn.ID, latencyMs)
 
 		if resp.StatusCode >= 500 || resp.StatusCode == 429 {
-			bodyBytes, _ := io.ReadAll(resp.Body)
+			io.ReadAll(resp.Body)
 			resp.Body.Close()
 			h.markProviderCooldown(ctx, providerConn.ID, fmt.Sprintf("HTTP %d", resp.StatusCode))
 			lastErr = fmt.Sprintf("provider returned %d", resp.StatusCode)
@@ -298,6 +301,15 @@ func (h *ChatHandler) executeDirectRequest(ctx context.Context, w http.ResponseW
 			return providerConn.Provider, targetModel.ModelID, resp.StatusCode
 		}
 
+		if req.Stream {
+			streaming.WriteSSEHeaders(w)
+			w.WriteHeader(http.StatusOK)
+			if err := streaming.StreamResponse(ctx, w, resp.Body); err != nil {
+				writeSSEError(w, err.Error())
+			}
+			resp.Body.Close()
+			return providerConn.Provider, targetModel.ModelID, http.StatusOK
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		io.Copy(w, resp.Body)
@@ -364,7 +376,7 @@ func (h *ChatHandler) recordUsage(ctx context.Context, req *ChatRequest, startTi
 		event.PromptTokens = usage.PromptTokens
 		event.CompletionTokens = usage.CompletionTokens
 		event.TotalTokens = usage.TotalTokens
-		event.EstimatedCost = calculateCost(usage.PromptTokens, usage.CompletionTokens, 0, 0)
+		event.EstimatedCost = h.calculateModelCost(ctx, model, usage.PromptTokens, usage.CompletionTokens)
 	}
 
 	event.LatencyMs = int(time.Since(startTime).Milliseconds())
@@ -416,8 +428,21 @@ func extractUsage(data map[string]any) *Usage {
 	return nil
 }
 
-func calculateCost(promptTokens, completionTokens, inputPrice, outputPrice int) float64 {
-	return float64(promptTokens)*float64(inputPrice)/1000 + float64(completionTokens)*float64(outputPrice)/1000
+func calculateCost(promptTokens, completionTokens int, inputPrice, outputPrice float64) float64 {
+	return float64(promptTokens)*inputPrice/1000 + float64(completionTokens)*outputPrice/1000
+}
+
+func (h *ChatHandler) calculateModelCost(ctx context.Context, modelID string, promptTokens, completionTokens int) float64 {
+	models, err := h.DB.Models().ListEnabled(ctx)
+	if err != nil {
+		return 0
+	}
+	for _, m := range models {
+		if m.ModelID == modelID || m.ModelName == modelID || m.ID == modelID {
+			return calculateCost(promptTokens, completionTokens, m.InputCostPer1k, m.OutputCostPer1k)
+		}
+	}
+	return 0
 }
 
 func (h *ChatHandler) updateProviderLatency(ctx context.Context, providerID string, latencyMs int) {

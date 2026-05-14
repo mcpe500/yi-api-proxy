@@ -11,7 +11,7 @@ import (
 )
 
 type pgDB struct {
-	driver *pgDriver
+	driver     *pgDriver
 	users      *pgUserRepo
 	apiKeys    *pgApiKeyRepo
 	providers  *pgProviderRepo
@@ -55,17 +55,18 @@ func newPgDriver(dsn string) (DatabaseManager, error) {
 	return sdb, nil
 }
 
-func (s *pgDB) Driver() string                { return "postgres" }
-func (s *pgDB) Connect() error                { return s.driver.db.PingContext(context.Background()) }
-func (s *pgDB) Close() error                  { return s.driver.db.Close() }
-func (s *pgDB) Users() UserRepository          { return s.users }
-func (s *pgDB) ApiKeys() ApiKeyRepository      { return s.apiKeys }
-func (s *pgDB) Providers() ProviderRepository  { return s.providers }
-func (s *pgDB) Models() ModelRepository        { return s.models }
-func (s *pgDB) Combos() ComboRepository        { return s.combos }
-func (s *pgDB) UsageEvents() UsageRepository   { return s.usage }
-func (s *pgDB) AuditLogs() AuditRepository     { return s.audit }
-func (s *pgDB) Settings() SettingsRepository   { return s.settings }
+func (s *pgDB) Driver() string                  { return "postgres" }
+func (s *pgDB) Connect() error                  { return s.driver.db.PingContext(context.Background()) }
+func (s *pgDB) Ping() error                     { return s.driver.db.PingContext(context.Background()) }
+func (s *pgDB) Close() error                    { return s.driver.db.Close() }
+func (s *pgDB) Users() UserRepository           { return s.users }
+func (s *pgDB) ApiKeys() ApiKeyRepository       { return s.apiKeys }
+func (s *pgDB) Providers() ProviderRepository   { return s.providers }
+func (s *pgDB) Models() ModelRepository         { return s.models }
+func (s *pgDB) Combos() ComboRepository         { return s.combos }
+func (s *pgDB) UsageEvents() UsageRepository    { return s.usage }
+func (s *pgDB) AuditLogs() AuditRepository      { return s.audit }
+func (s *pgDB) Settings() SettingsRepository    { return s.settings }
 func (s *pgDB) RateLimits() RateLimitRepository { return s.rateLimits }
 func (s *pgDB) Quotas() QuotaRepository         { return s.quotas }
 func (s *pgDB) Aliases() ModelAliasRepository   { return s.aliases }
@@ -100,7 +101,7 @@ func (d *pgDriver) migrate() error {
 
 		`CREATE TABLE IF NOT EXISTS api_keys (
 			id TEXT PRIMARY KEY,
-			user_id TEXT NOT NULL,
+			user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 			name TEXT NOT NULL DEFAULT '',
 			key_prefix TEXT NOT NULL DEFAULT '',
 			key_hash TEXT NOT NULL UNIQUE,
@@ -176,7 +177,7 @@ func (d *pgDriver) migrate() error {
 
 		`CREATE TABLE IF NOT EXISTS combo_items (
 			id TEXT PRIMARY KEY,
-			combo_id TEXT NOT NULL,
+			combo_id TEXT NOT NULL REFERENCES combos(id) ON DELETE CASCADE,
 			provider_id TEXT NOT NULL,
 			model_id TEXT NOT NULL,
 			priority INTEGER NOT NULL DEFAULT 0,
@@ -239,7 +240,7 @@ func (d *pgDriver) migrate() error {
 
 		`CREATE TABLE IF NOT EXISTS quotas (
 			id TEXT PRIMARY KEY,
-			user_id TEXT NOT NULL UNIQUE,
+			user_id TEXT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
 			monthly_token_cap BIGINT NOT NULL DEFAULT 0,
 			monthly_cost_cap REAL NOT NULL DEFAULT 0,
 			used_tokens BIGINT NOT NULL DEFAULT 0,
@@ -252,7 +253,7 @@ func (d *pgDriver) migrate() error {
 
 		`CREATE TABLE IF NOT EXISTS rate_limits (
 			id TEXT PRIMARY KEY,
-			user_id TEXT NOT NULL UNIQUE,
+			user_id TEXT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
 			requests_per_minute INTEGER NOT NULL DEFAULT 60,
 			requests_per_day INTEGER NOT NULL DEFAULT 1000,
 			tokens_per_minute INTEGER NOT NULL DEFAULT 100000,
@@ -275,13 +276,18 @@ func (d *pgDriver) migrate() error {
 		`CREATE INDEX IF NOT EXISTS idx_model_aliases_user_id ON model_aliases(user_id)`,
 	}
 
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin migration tx: %w", err)
+	}
 	for _, stmt := range statements {
-		if _, err := d.db.ExecContext(ctx, stmt); err != nil {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			tx.Rollback()
 			return fmt.Errorf("migration failed: %w\nstmt: %s", err, stmt)
 		}
 	}
 
-	return nil
+	return tx.Commit()
 }
 
 type pgUserRepo struct{ driver *pgDriver }
@@ -302,19 +308,33 @@ func (r *pgUserRepo) FindByEmail(ctx context.Context, email string) (*User, erro
 	return r.scanUser(row)
 }
 func (r *pgUserRepo) List(ctx context.Context, f UserFilter) ([]*User, error) {
-	q := `SELECT id,email,name,role,status,password_hash,created_by,created_at,updated_at,last_login_at FROM users WHERE 1=1`
+	q := `SELECT id,email,name,role,status,password_hash,created_by,created_at,updated_at,last_login_at FROM users WHERE status != 'deleted'`
 	var args []interface{}
-	if f.Role != "" { q += ` AND role=$` + fmt.Sprint(len(args)+1); args = append(args, f.Role) }
-	if f.Status != "" { q += ` AND status=$` + fmt.Sprint(len(args)+1); args = append(args, f.Status) }
+	if f.Role != "" {
+		q += ` AND role=$` + fmt.Sprint(len(args)+1)
+		args = append(args, f.Role)
+	}
+	if f.Status != "" {
+		q += ` AND status=$` + fmt.Sprint(len(args)+1)
+		args = append(args, f.Status)
+	}
 	q += ` ORDER BY created_at DESC`
-	if f.Limit > 0 { q += fmt.Sprintf(` LIMIT %d`, f.Limit) }
-	if f.Offset > 0 { q += fmt.Sprintf(` OFFSET %d`, f.Offset) }
+	if f.Limit > 0 {
+		q += fmt.Sprintf(` LIMIT %d`, f.Limit)
+	}
+	if f.Offset > 0 {
+		q += fmt.Sprintf(` OFFSET %d`, f.Offset)
+	}
 	rows, err := r.driver.db.QueryContext(ctx, q, args...)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 	var result []*User
 	for rows.Next() {
-		if u, err := r.scanUserRow(rows); err == nil { result = append(result, u) }
+		if u, err := r.scanUserRow(rows); err == nil {
+			result = append(result, u)
+		}
 	}
 	return result, rows.Err()
 }
@@ -324,10 +344,22 @@ func (r *pgUserRepo) Update(ctx context.Context, u *User) error {
 		u.Email, u.Name, u.Role, u.Status, u.PasswordHash, u.UpdatedAt, u.LastLoginAt, u.ID)
 	return err
 }
-func (r *pgUserRepo) UpdateStatus(ctx context.Context, id, status string) error { _, err := r.driver.db.ExecContext(ctx, `UPDATE users SET status=$1,updated_at=NOW() WHERE id=$2`, status, id); return err }
-func (r *pgUserRepo) UpdatePassword(ctx context.Context, id, hash string) error { _, err := r.driver.db.ExecContext(ctx, `UPDATE users SET password_hash=$1,updated_at=NOW() WHERE id=$2`, hash, id); return err }
-func (r *pgUserRepo) UpdateLastLogin(ctx context.Context, id string) error { _, err := r.driver.db.ExecContext(ctx, `UPDATE users SET last_login_at=NOW(),updated_at=NOW() WHERE id=$1`, id); return err }
-func (r *pgUserRepo) Delete(ctx context.Context, id string) error { _, err := r.driver.db.ExecContext(ctx, `UPDATE users SET status='deleted',updated_at=NOW() WHERE id=$1`, id); return err }
+func (r *pgUserRepo) UpdateStatus(ctx context.Context, id, status string) error {
+	_, err := r.driver.db.ExecContext(ctx, `UPDATE users SET status=$1,updated_at=NOW() WHERE id=$2`, status, id)
+	return err
+}
+func (r *pgUserRepo) UpdatePassword(ctx context.Context, id, hash string) error {
+	_, err := r.driver.db.ExecContext(ctx, `UPDATE users SET password_hash=$1,updated_at=NOW() WHERE id=$2`, hash, id)
+	return err
+}
+func (r *pgUserRepo) UpdateLastLogin(ctx context.Context, id string) error {
+	_, err := r.driver.db.ExecContext(ctx, `UPDATE users SET last_login_at=NOW(),updated_at=NOW() WHERE id=$1`, id)
+	return err
+}
+func (r *pgUserRepo) Delete(ctx context.Context, id string) error {
+	_, err := r.driver.db.ExecContext(ctx, `UPDATE users SET status='deleted',updated_at=NOW() WHERE id=$1`, id)
+	return err
+}
 func (r *pgUserRepo) CountActiveAdmins(ctx context.Context) (int, error) {
 	var cnt int
 	err := r.driver.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users WHERE role='admin' AND status='active'`).Scan(&cnt)
@@ -336,7 +368,9 @@ func (r *pgUserRepo) CountActiveAdmins(ctx context.Context) (int, error) {
 func (r *pgUserRepo) scanUser(row *sql.Row) (*User, error) {
 	u := &User{}
 	err := row.Scan(&u.ID, &u.Email, &u.Name, &u.Role, &u.Status, &u.PasswordHash, &u.CreatedBy, &u.CreatedAt, &u.UpdatedAt, &u.LastLoginAt)
-	if err == sql.ErrNoRows { return nil, nil }
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
 	return u, err
 }
 func (r *pgUserRepo) scanUserRow(rows *sql.Rows) (*User, error) {
@@ -363,18 +397,30 @@ func (r *pgApiKeyRepo) FindByHash(ctx context.Context, hash string) (*ApiKey, er
 }
 func (r *pgApiKeyRepo) FindByUserID(ctx context.Context, userID string) ([]*ApiKey, error) {
 	rows, err := r.driver.db.QueryContext(ctx, `SELECT id,user_id,name,key_prefix,key_hash,scopes,status,expires_at,last_used_at,created_at,revoked_at FROM api_keys WHERE user_id=$1`, userID)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 	var result []*ApiKey
-	for rows.Next() { if k, err := r.scanApiKeyRows(rows); err == nil { result = append(result, k) } }
+	for rows.Next() {
+		if k, err := r.scanApiKeyRows(rows); err == nil {
+			result = append(result, k)
+		}
+	}
 	return result, rows.Err()
 }
 func (r *pgApiKeyRepo) List(ctx context.Context) ([]*ApiKey, error) {
 	rows, err := r.driver.db.QueryContext(ctx, `SELECT id,user_id,name,key_prefix,key_hash,scopes,status,expires_at,last_used_at,created_at,revoked_at FROM api_keys`)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 	var result []*ApiKey
-	for rows.Next() { if k, err := r.scanApiKeyRows(rows); err == nil { result = append(result, k) } }
+	for rows.Next() {
+		if k, err := r.scanApiKeyRows(rows); err == nil {
+			result = append(result, k)
+		}
+	}
 	return result, rows.Err()
 }
 func (r *pgApiKeyRepo) Update(ctx context.Context, k *ApiKey) error {
@@ -382,9 +428,18 @@ func (r *pgApiKeyRepo) Update(ctx context.Context, k *ApiKey) error {
 		k.Name, k.Scopes, k.Status, k.ExpiresAt, k.LastUsedAt, k.RevokedAt, k.ID)
 	return err
 }
-func (r *pgApiKeyRepo) UpdateLastUsed(ctx context.Context, id string) error { _, err := r.driver.db.ExecContext(ctx, `UPDATE api_keys SET last_used_at=NOW() WHERE id=$1`, id); return err }
-func (r *pgApiKeyRepo) Revoke(ctx context.Context, id string) error { _, err := r.driver.db.ExecContext(ctx, `UPDATE api_keys SET status='revoked',revoked_at=NOW() WHERE id=$1`, id); return err }
-func (r *pgApiKeyRepo) RevokeAllForUser(ctx context.Context, userID string) error { _, err := r.driver.db.ExecContext(ctx, `UPDATE api_keys SET status='revoked',revoked_at=NOW() WHERE user_id=$1 AND status='active'`, userID); return err }
+func (r *pgApiKeyRepo) UpdateLastUsed(ctx context.Context, id string) error {
+	_, err := r.driver.db.ExecContext(ctx, `UPDATE api_keys SET last_used_at=NOW() WHERE id=$1`, id)
+	return err
+}
+func (r *pgApiKeyRepo) Revoke(ctx context.Context, id string) error {
+	_, err := r.driver.db.ExecContext(ctx, `UPDATE api_keys SET status='revoked',revoked_at=NOW() WHERE id=$1`, id)
+	return err
+}
+func (r *pgApiKeyRepo) RevokeAllForUser(ctx context.Context, userID string) error {
+	_, err := r.driver.db.ExecContext(ctx, `UPDATE api_keys SET status='revoked',revoked_at=NOW() WHERE user_id=$1 AND status='active'`, userID)
+	return err
+}
 func (r *pgApiKeyRepo) CountByUser(ctx context.Context, userID string) (int, error) {
 	var cnt int
 	err := r.driver.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM api_keys WHERE user_id=$1`, userID).Scan(&cnt)
@@ -393,7 +448,9 @@ func (r *pgApiKeyRepo) CountByUser(ctx context.Context, userID string) (int, err
 func (r *pgApiKeyRepo) scanApiKey(row *sql.Row) (*ApiKey, error) {
 	k := &ApiKey{}
 	err := row.Scan(&k.ID, &k.UserID, &k.Name, &k.KeyPrefix, &k.KeyHash, &k.Scopes, &k.Status, &k.ExpiresAt, &k.LastUsedAt, &k.CreatedAt, &k.RevokedAt)
-	if err == sql.ErrNoRows { return nil, nil }
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
 	return k, err
 }
 func (r *pgApiKeyRepo) scanApiKeyRows(rows *sql.Rows) (*ApiKey, error) {
@@ -419,14 +476,18 @@ func (r *pgProviderRepo) FindByID(ctx context.Context, id string) (*ProviderConn
 func (r *pgProviderRepo) FindByProvider(ctx context.Context, provider string) ([]*ProviderConnection, error) {
 	rows, err := r.driver.db.QueryContext(ctx,
 		`SELECT id,provider,name,auth_type,encrypted_secret,base_url,priority,weight,status,last_latency_ms,cooldown_until,last_error,last_error_at,backoff_level,created_by,created_at,updated_at FROM providers WHERE provider=$1`, provider)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 	return r.scanAll(rows)
 }
 func (r *pgProviderRepo) List(ctx context.Context) ([]*ProviderConnection, error) {
 	rows, err := r.driver.db.QueryContext(ctx,
 		`SELECT id,provider,name,auth_type,encrypted_secret,base_url,priority,weight,status,last_latency_ms,cooldown_until,last_error,last_error_at,backoff_level,created_by,created_at,updated_at FROM providers ORDER BY priority DESC,name`)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 	return r.scanAll(rows)
 }
@@ -436,17 +497,28 @@ func (r *pgProviderRepo) Update(ctx context.Context, p *ProviderConnection) erro
 		p.Name, p.BaseURL, p.Priority, p.Weight, p.Status, p.LastLatencyMs, p.EncryptedSecret, p.CooldownUntil, p.LastError, p.LastErrorAt, p.BackoffLevel, p.UpdatedAt, p.ID)
 	return err
 }
-func (r *pgProviderRepo) Delete(ctx context.Context, id string) error { _, err := r.driver.db.ExecContext(ctx, `DELETE FROM providers WHERE id=$1`, id); return err }
+func (r *pgProviderRepo) Delete(ctx context.Context, id string) error {
+	_, err := r.driver.db.ExecContext(ctx, `DELETE FROM providers WHERE id=$1`, id)
+	return err
+}
 func (r *pgProviderRepo) MarkCooldown(ctx context.Context, id string, until int64, errMsg string) error {
 	_, err := r.driver.db.ExecContext(ctx, `UPDATE providers SET status='cooldown',cooldown_until=TO_TIMESTAMP($1),last_error=$2,last_error_at=NOW(),backoff_level=backoff_level+1 WHERE id=$3`, until, errMsg, id)
 	return err
 }
-func (r *pgProviderRepo) ClearCooldown(ctx context.Context, id string) error { _, err := r.driver.db.ExecContext(ctx, `UPDATE providers SET status='active',cooldown_until=NULL,last_error='',last_error_at=NULL,backoff_level=0 WHERE id=$1`, id); return err }
-func (r *pgProviderRepo) UpdateStatus(ctx context.Context, id, status string) error { _, err := r.driver.db.ExecContext(ctx, `UPDATE providers SET status=$1,updated_at=NOW() WHERE id=$2`, status, id); return err }
+func (r *pgProviderRepo) ClearCooldown(ctx context.Context, id string) error {
+	_, err := r.driver.db.ExecContext(ctx, `UPDATE providers SET status='active',cooldown_until=NULL,last_error='',last_error_at=NULL,backoff_level=0 WHERE id=$1`, id)
+	return err
+}
+func (r *pgProviderRepo) UpdateStatus(ctx context.Context, id, status string) error {
+	_, err := r.driver.db.ExecContext(ctx, `UPDATE providers SET status=$1,updated_at=NOW() WHERE id=$2`, status, id)
+	return err
+}
 func (r *pgProviderRepo) scan(row *sql.Row) (*ProviderConnection, error) {
 	p := &ProviderConnection{}
 	err := row.Scan(&p.ID, &p.Provider, &p.Name, &p.AuthType, &p.EncryptedSecret, &p.BaseURL, &p.Priority, &p.Weight, &p.Status, &p.LastLatencyMs, &p.CooldownUntil, &p.LastError, &p.LastErrorAt, &p.BackoffLevel, &p.CreatedBy, &p.CreatedAt, &p.UpdatedAt)
-	if err == sql.ErrNoRows { return nil, nil }
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
 	return p, err
 }
 func (r *pgProviderRepo) scanAll(rows *sql.Rows) ([]*ProviderConnection, error) {
@@ -476,20 +548,26 @@ func (r *pgModelRepo) FindByID(ctx context.Context, id string) (*Model, error) {
 	return r.scan(row)
 }
 func (r *pgModelRepo) List(ctx context.Context) ([]*Model, error) {
-	rows, err := r.driver.db.QueryContext(ctx, `SELECT id,provider_id,model_id,display_name,provider,model_name,mode,capabilities,context_window,max_output_tokens,input_price,output_price,input_cost_per_1k,output_cost_per_1k,enabled,is_active,tags,default_timeout_ms,supports_stream,created_at,updated_at FROM models`)
-	if err != nil { return nil, err }
+	rows, err := r.driver.db.QueryContext(ctx, `SELECT id,provider_id,model_id,display_name,provider,model_name,mode,capabilities,context_window,max_output_tokens,input_price,output_price,input_cost_per_1k,output_cost_per_1k,enabled,is_active,tags,default_timeout_ms,supports_stream,created_at,updated_at FROM models ORDER BY display_name`)
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 	return r.scanAll(rows)
 }
 func (r *pgModelRepo) ListEnabled(ctx context.Context) ([]*Model, error) {
 	rows, err := r.driver.db.QueryContext(ctx, `SELECT id,provider_id,model_id,display_name,provider,model_name,mode,capabilities,context_window,max_output_tokens,input_price,output_price,input_cost_per_1k,output_cost_per_1k,enabled,is_active,tags,default_timeout_ms,supports_stream,created_at,updated_at FROM models WHERE enabled=true`)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 	return r.scanAll(rows)
 }
 func (r *pgModelRepo) ListByProvider(ctx context.Context, providerID string) ([]*Model, error) {
-	rows, err := r.driver.db.QueryContext(ctx, `SELECT id,provider_id,model_id,display_name,provider,model_name,mode,capabilities,context_window,max_output_tokens,input_price,output_price,input_cost_per_1k,output_cost_per_1k,enabled,is_active,tags,default_timeout_ms,supports_stream,created_at,updated_at FROM models WHERE provider_id=$1`, providerID)
-	if err != nil { return nil, err }
+	rows, err := r.driver.db.QueryContext(ctx, `SELECT id,provider_id,model_id,display_name,provider,model_name,mode,capabilities,context_window,max_output_tokens,input_price,output_price,input_cost_per_1k,output_cost_per_1k,enabled,is_active,tags,default_timeout_ms,supports_stream,created_at,updated_at FROM models WHERE provider_id=$1 OR provider=$1`, providerID)
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 	return r.scanAll(rows)
 }
@@ -501,12 +579,17 @@ func (r *pgModelRepo) Update(ctx context.Context, m *Model) error {
 		m.ProviderID, m.ModelID, m.DisplayName, m.Provider, m.ModelName, m.Mode, caps, m.ContextWindow, m.MaxOutputTokens, m.InputPrice, m.OutputPrice, m.InputCostPer1k, m.OutputCostPer1k, m.Enabled, m.IsActive, tags, m.DefaultTimeoutMs, m.SupportsStream, m.UpdatedAt, m.ID)
 	return err
 }
-func (r *pgModelRepo) Delete(ctx context.Context, id string) error { _, err := r.driver.db.ExecContext(ctx, `DELETE FROM models WHERE id=$1`, id); return err }
+func (r *pgModelRepo) Delete(ctx context.Context, id string) error {
+	_, err := r.driver.db.ExecContext(ctx, `DELETE FROM models WHERE id=$1`, id)
+	return err
+}
 func (r *pgModelRepo) scan(row *sql.Row) (*Model, error) {
 	m := &Model{}
 	var capsJSON, tagsJSON string
 	err := row.Scan(&m.ID, &m.ProviderID, &m.ModelID, &m.DisplayName, &m.Provider, &m.ModelName, &m.Mode, &capsJSON, &m.ContextWindow, &m.MaxOutputTokens, &m.InputPrice, &m.OutputPrice, &m.InputCostPer1k, &m.OutputCostPer1k, &m.Enabled, &m.IsActive, &tagsJSON, &m.DefaultTimeoutMs, &m.SupportsStream, &m.CreatedAt, &m.UpdatedAt)
-	if err == sql.ErrNoRows { return nil, nil }
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
 	json.Unmarshal([]byte(capsJSON), &m.Capabilities)
 	json.Unmarshal([]byte(tagsJSON), &m.Tags)
 	return m, err
@@ -537,50 +620,86 @@ func (r *pgComboRepo) FindByID(ctx context.Context, id string) (*Combo, error) {
 	row := r.driver.db.QueryRowContext(ctx, `SELECT id,name,description,user_id,strategy,is_active,created_by,created_at,updated_at FROM combos WHERE id=$1`, id)
 	c := &Combo{}
 	err := row.Scan(&c.ID, &c.Name, &c.Description, &c.UserID, &c.Strategy, &c.IsActive, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt)
-	if err == sql.ErrNoRows { return nil, nil }
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
 	return c, err
 }
 func (r *pgComboRepo) FindByName(ctx context.Context, name string) (*Combo, error) {
 	row := r.driver.db.QueryRowContext(ctx, `SELECT id,name,description,user_id,strategy,is_active,created_by,created_at,updated_at FROM combos WHERE name=$1`, name)
 	c := &Combo{}
 	err := row.Scan(&c.ID, &c.Name, &c.Description, &c.UserID, &c.Strategy, &c.IsActive, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt)
-	if err == sql.ErrNoRows { return nil, nil }
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
 	return c, err
 }
 func (r *pgComboRepo) FindByUser(ctx context.Context, userID string) ([]*Combo, error) {
 	rows, err := r.driver.db.QueryContext(ctx, `SELECT id,name,description,user_id,strategy,is_active,created_by,created_at,updated_at FROM combos WHERE user_id=$1`, userID)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 	var result []*Combo
-	for rows.Next() { c := &Combo{}; if rows.Scan(&c.ID, &c.Name, &c.Description, &c.UserID, &c.Strategy, &c.IsActive, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt) == nil { result = append(result, c) } }
+	for rows.Next() {
+		c := &Combo{}
+		if rows.Scan(&c.ID, &c.Name, &c.Description, &c.UserID, &c.Strategy, &c.IsActive, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt) == nil {
+			result = append(result, c)
+		}
+	}
 	return result, rows.Err()
 }
 func (r *pgComboRepo) List(ctx context.Context) ([]*Combo, error) {
 	rows, err := r.driver.db.QueryContext(ctx, `SELECT id,name,description,user_id,strategy,is_active,created_by,created_at,updated_at FROM combos`)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 	var result []*Combo
-	for rows.Next() { c := &Combo{}; if rows.Scan(&c.ID, &c.Name, &c.Description, &c.UserID, &c.Strategy, &c.IsActive, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt) == nil { result = append(result, c) } }
+	for rows.Next() {
+		c := &Combo{}
+		if rows.Scan(&c.ID, &c.Name, &c.Description, &c.UserID, &c.Strategy, &c.IsActive, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt) == nil {
+			result = append(result, c)
+		}
+	}
 	return result, rows.Err()
 }
 func (r *pgComboRepo) ListEnabled(ctx context.Context) ([]*Combo, error) {
 	rows, err := r.driver.db.QueryContext(ctx, `SELECT id,name,description,user_id,strategy,is_active,created_by,created_at,updated_at FROM combos WHERE is_active=true`)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 	var result []*Combo
-	for rows.Next() { c := &Combo{}; if rows.Scan(&c.ID, &c.Name, &c.Description, &c.UserID, &c.Strategy, &c.IsActive, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt) == nil { result = append(result, c) } }
+	for rows.Next() {
+		c := &Combo{}
+		if rows.Scan(&c.ID, &c.Name, &c.Description, &c.UserID, &c.Strategy, &c.IsActive, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt) == nil {
+			result = append(result, c)
+		}
+	}
 	return result, rows.Err()
 }
-func (r *pgComboRepo) Update(ctx context.Context, c *Combo) error { _, err := r.driver.db.ExecContext(ctx, `UPDATE combos SET name=$1,description=$2,strategy=$3,is_active=$4,updated_at=$5 WHERE id=$6`, c.Name, c.Description, c.Strategy, c.IsActive, c.UpdatedAt, c.ID); return err }
-func (r *pgComboRepo) Delete(ctx context.Context, id string) error { _, err := r.driver.db.ExecContext(ctx, `DELETE FROM combos WHERE id=$1`, id); return err }
+func (r *pgComboRepo) Update(ctx context.Context, c *Combo) error {
+	_, err := r.driver.db.ExecContext(ctx, `UPDATE combos SET name=$1,description=$2,strategy=$3,is_active=$4,updated_at=$5 WHERE id=$6`, c.Name, c.Description, c.Strategy, c.IsActive, c.UpdatedAt, c.ID)
+	return err
+}
+func (r *pgComboRepo) Delete(ctx context.Context, id string) error {
+	_, err := r.driver.db.ExecContext(ctx, `DELETE FROM combos WHERE id=$1`, id)
+	return err
+}
 func (r *pgComboRepo) AddItem(ctx context.Context, item *ComboItem) error {
 	_, err := r.driver.db.ExecContext(ctx, `INSERT INTO combo_items (id,combo_id,provider_id,model_id,priority,weight,max_retries,timeout_seconds,conditions) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
 		item.ID, item.ComboID, item.ProviderID, item.ModelID, item.Priority, item.Weight, item.MaxRetries, item.TimeoutSeconds, item.Conditions)
 	return err
 }
-func (r *pgComboRepo) RemoveItem(ctx context.Context, itemID string) error { _, err := r.driver.db.ExecContext(ctx, `DELETE FROM combo_items WHERE id=$1`, itemID); return err }
+func (r *pgComboRepo) RemoveItem(ctx context.Context, itemID string) error {
+	_, err := r.driver.db.ExecContext(ctx, `DELETE FROM combo_items WHERE id=$1`, itemID)
+	return err
+}
 func (r *pgComboRepo) ReorderItems(ctx context.Context, comboID string, itemIDs []string) error {
-	for i, id := range itemIDs { r.driver.db.ExecContext(ctx, `UPDATE combo_items SET priority=$1 WHERE id=$2 AND combo_id=$3`, i+1, id, comboID) }
+	for i, id := range itemIDs {
+		r.driver.db.ExecContext(ctx, `UPDATE combo_items SET priority=$1 WHERE id=$2 AND combo_id=$3`, i+1, id, comboID)
+	}
 	return nil
 }
 
@@ -597,26 +716,44 @@ func (r *pgUsageRepo) FindByID(ctx context.Context, id string) (*UsageEvent, err
 	row := r.driver.db.QueryRowContext(ctx, `SELECT id,request_id,user_id,api_key_id,requested_model,final_model,provider,status_code,error_code,prompt_tokens,completion_tokens,total_tokens,estimated_cost,latency_ms,fallback_count,is_stream,created_at FROM usage_events WHERE id=$1`, id)
 	e := &UsageEvent{}
 	err := row.Scan(&e.ID, &e.RequestID, &e.UserID, &e.ApiKeyID, &e.RequestedModel, &e.FinalModel, &e.Provider, &e.StatusCode, &e.ErrorCode, &e.PromptTokens, &e.CompletionTokens, &e.TotalTokens, &e.EstimatedCost, &e.LatencyMs, &e.FallbackCount, &e.IsStream, &e.CreatedAt)
-	if err == sql.ErrNoRows { return nil, nil }
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
 	return e, err
 }
 func (r *pgUsageRepo) FindByUserID(ctx context.Context, userID string, limit int) ([]*UsageEvent, error) {
 	q := `SELECT id,request_id,user_id,api_key_id,requested_model,final_model,provider,status_code,error_code,prompt_tokens,completion_tokens,total_tokens,estimated_cost,latency_ms,fallback_count,is_stream,created_at FROM usage_events WHERE user_id=$1 ORDER BY created_at DESC`
-	if limit > 0 { q += fmt.Sprintf(` LIMIT %d`, limit) }
+	if limit > 0 {
+		q += fmt.Sprintf(` LIMIT %d`, limit)
+	}
 	rows, err := r.driver.db.QueryContext(ctx, q, userID)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 	var result []*UsageEvent
-	for rows.Next() { e := &UsageEvent{}; if rows.Scan(&e.ID, &e.RequestID, &e.UserID, &e.ApiKeyID, &e.RequestedModel, &e.FinalModel, &e.Provider, &e.StatusCode, &e.ErrorCode, &e.PromptTokens, &e.CompletionTokens, &e.TotalTokens, &e.EstimatedCost, &e.LatencyMs, &e.FallbackCount, &e.IsStream, &e.CreatedAt) == nil { result = append(result, e) } }
+	for rows.Next() {
+		e := &UsageEvent{}
+		if rows.Scan(&e.ID, &e.RequestID, &e.UserID, &e.ApiKeyID, &e.RequestedModel, &e.FinalModel, &e.Provider, &e.StatusCode, &e.ErrorCode, &e.PromptTokens, &e.CompletionTokens, &e.TotalTokens, &e.EstimatedCost, &e.LatencyMs, &e.FallbackCount, &e.IsStream, &e.CreatedAt) == nil {
+			result = append(result, e)
+		}
+	}
 	return result, rows.Err()
 }
 func (r *pgUsageRepo) FindByDateRange(ctx context.Context, userID string, from, to int64) ([]*UsageEvent, error) {
 	rows, err := r.driver.db.QueryContext(ctx, `SELECT id,request_id,user_id,api_key_id,requested_model,final_model,provider,status_code,error_code,prompt_tokens,completion_tokens,total_tokens,estimated_cost,latency_ms,fallback_count,is_stream,created_at FROM usage_events WHERE user_id=$1 AND created_at BETWEEN TO_TIMESTAMP($2) AND TO_TIMESTAMP($3) ORDER BY created_at DESC`,
 		userID, from, to)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 	var result []*UsageEvent
-	for rows.Next() { e := &UsageEvent{}; if rows.Scan(&e.ID, &e.RequestID, &e.UserID, &e.ApiKeyID, &e.RequestedModel, &e.FinalModel, &e.Provider, &e.StatusCode, &e.ErrorCode, &e.PromptTokens, &e.CompletionTokens, &e.TotalTokens, &e.EstimatedCost, &e.LatencyMs, &e.FallbackCount, &e.IsStream, &e.CreatedAt) == nil { result = append(result, e) } }
+	for rows.Next() {
+		e := &UsageEvent{}
+		if rows.Scan(&e.ID, &e.RequestID, &e.UserID, &e.ApiKeyID, &e.RequestedModel, &e.FinalModel, &e.Provider, &e.StatusCode, &e.ErrorCode, &e.PromptTokens, &e.CompletionTokens, &e.TotalTokens, &e.EstimatedCost, &e.LatencyMs, &e.FallbackCount, &e.IsStream, &e.CreatedAt) == nil {
+			result = append(result, e)
+		}
+	}
 	return result, rows.Err()
 }
 func (r *pgUsageRepo) GetSummary(ctx context.Context, userID string, from, to int64) (*UsageSummary, error) {
@@ -629,7 +766,9 @@ func (r *pgUsageRepo) GetSummary(ctx context.Context, userID string, from, to in
 }
 func (r *pgUsageRepo) Cleanup(ctx context.Context, before int64) (int64, error) {
 	res, err := r.driver.db.ExecContext(ctx, `DELETE FROM usage_events WHERE created_at < TO_TIMESTAMP($1)`, before)
-	if err != nil { return 0, err }
+	if err != nil {
+		return 0, err
+	}
 	n, _ := res.RowsAffected()
 	return n, nil
 }
@@ -645,22 +784,41 @@ func (r *pgAuditRepo) FindByID(ctx context.Context, id string) (*AuditLog, error
 	row := r.driver.db.QueryRowContext(ctx, `SELECT id,actor_id,actor_email,actor_role,action,target_type,target_id,details,ip_address,user_agent,created_at FROM audit_logs WHERE id=$1`, id)
 	l := &AuditLog{}
 	err := row.Scan(&l.ID, &l.ActorID, &l.ActorEmail, &l.ActorRole, &l.Action, &l.TargetType, &l.TargetID, &l.Details, &l.IPAddress, &l.UserAgent, &l.CreatedAt)
-	if err == sql.ErrNoRows { return nil, nil }
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
 	return l, err
 }
 func (r *pgAuditRepo) List(ctx context.Context, f *AuditFilter) ([]*AuditLog, int64, error) {
 	q := `SELECT id,actor_id,actor_email,actor_role,action,target_type,target_id,details,ip_address,user_agent,created_at FROM audit_logs WHERE 1=1`
 	var args []interface{}
-	if f.ActorID != "" { q += ` AND actor_id=$` + fmt.Sprint(len(args)+1); args = append(args, f.ActorID) }
-	if f.Action != "" { q += ` AND action=$` + fmt.Sprint(len(args)+1); args = append(args, f.Action) }
+	if f.ActorID != "" {
+		q += ` AND actor_id=$` + fmt.Sprint(len(args)+1)
+		args = append(args, f.ActorID)
+	}
+	if f.Action != "" {
+		q += ` AND action=$` + fmt.Sprint(len(args)+1)
+		args = append(args, f.Action)
+	}
 	q += ` ORDER BY created_at DESC`
-	if f.Limit > 0 { q += fmt.Sprintf(` LIMIT %d`, f.Limit) }
-	if f.Offset > 0 { q += fmt.Sprintf(` OFFSET %d`, f.Offset) }
+	if f.Limit > 0 {
+		q += fmt.Sprintf(` LIMIT %d`, f.Limit)
+	}
+	if f.Offset > 0 {
+		q += fmt.Sprintf(` OFFSET %d`, f.Offset)
+	}
 	rows, err := r.driver.db.QueryContext(ctx, q, args...)
-	if err != nil { return nil, 0, err }
+	if err != nil {
+		return nil, 0, err
+	}
 	defer rows.Close()
 	var result []*AuditLog
-	for rows.Next() { l := &AuditLog{}; if rows.Scan(&l.ID, &l.ActorID, &l.ActorEmail, &l.ActorRole, &l.Action, &l.TargetType, &l.TargetID, &l.Details, &l.IPAddress, &l.UserAgent, &l.CreatedAt) == nil { result = append(result, l) } }
+	for rows.Next() {
+		l := &AuditLog{}
+		if rows.Scan(&l.ID, &l.ActorID, &l.ActorEmail, &l.ActorRole, &l.Action, &l.TargetType, &l.TargetID, &l.Details, &l.IPAddress, &l.UserAgent, &l.CreatedAt) == nil {
+			result = append(result, l)
+		}
+	}
 	return result, int64(len(result)), rows.Err()
 }
 
@@ -670,7 +828,9 @@ func (r *pgSettingsRepo) Get(ctx context.Context) (*Settings, error) {
 	row := r.driver.db.QueryRowContext(ctx, `SELECT require_login,require_api_key,enable_request_body_log,usage_retention_days,request_log_retention_days,audit_log_retention_days FROM settings WHERE id=1`)
 	s := &Settings{}
 	err := row.Scan(&s.RequireLogin, &s.RequireAPIKey, &s.EnableRequestBodyLog, &s.UsageRetentionDays, &s.RequestLogRetentionDays, &s.AuditLogRetentionDays)
-	if err == sql.ErrNoRows { return &Settings{}, nil }
+	if err == sql.ErrNoRows {
+		return &Settings{}, nil
+	}
 	return s, err
 }
 func (r *pgSettingsRepo) Update(ctx context.Context, s *Settings) error {
@@ -691,22 +851,33 @@ func (r *pgRateLimitRepo) FindByID(ctx context.Context, id string) (*RateLimit, 
 	row := r.driver.db.QueryRowContext(ctx, `SELECT id,user_id,requests_per_minute,requests_per_day,tokens_per_minute,created_at,updated_at FROM rate_limits WHERE id=$1`, id)
 	rl := &RateLimit{}
 	err := row.Scan(&rl.ID, &rl.UserID, &rl.RequestsPerMinute, &rl.RequestsPerDay, &rl.TokensPerMinute, &rl.CreatedAt, &rl.UpdatedAt)
-	if err == sql.ErrNoRows { return nil, nil }
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
 	return rl, err
 }
 func (r *pgRateLimitRepo) FindByUserID(ctx context.Context, userID string) (*RateLimit, error) {
 	row := r.driver.db.QueryRowContext(ctx, `SELECT id,user_id,requests_per_minute,requests_per_day,tokens_per_minute,created_at,updated_at FROM rate_limits WHERE user_id=$1`, userID)
 	rl := &RateLimit{}
 	err := row.Scan(&rl.ID, &rl.UserID, &rl.RequestsPerMinute, &rl.RequestsPerDay, &rl.TokensPerMinute, &rl.CreatedAt, &rl.UpdatedAt)
-	if err == sql.ErrNoRows { return nil, nil }
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
 	return rl, err
 }
 func (r *pgRateLimitRepo) List(ctx context.Context) ([]*RateLimit, error) {
 	rows, err := r.driver.db.QueryContext(ctx, `SELECT id,user_id,requests_per_minute,requests_per_day,tokens_per_minute,created_at,updated_at FROM rate_limits`)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 	var result []*RateLimit
-	for rows.Next() { rl := &RateLimit{}; if rows.Scan(&rl.ID, &rl.UserID, &rl.RequestsPerMinute, &rl.RequestsPerDay, &rl.TokensPerMinute, &rl.CreatedAt, &rl.UpdatedAt) == nil { result = append(result, rl) } }
+	for rows.Next() {
+		rl := &RateLimit{}
+		if rows.Scan(&rl.ID, &rl.UserID, &rl.RequestsPerMinute, &rl.RequestsPerDay, &rl.TokensPerMinute, &rl.CreatedAt, &rl.UpdatedAt) == nil {
+			result = append(result, rl)
+		}
+	}
 	return result, rows.Err()
 }
 func (r *pgRateLimitRepo) Update(ctx context.Context, rl *RateLimit) error {
@@ -714,7 +885,10 @@ func (r *pgRateLimitRepo) Update(ctx context.Context, rl *RateLimit) error {
 		rl.RequestsPerMinute, rl.RequestsPerDay, rl.TokensPerMinute, rl.UpdatedAt, rl.ID)
 	return err
 }
-func (r *pgRateLimitRepo) Delete(ctx context.Context, id string) error { _, err := r.driver.db.ExecContext(ctx, `DELETE FROM rate_limits WHERE id=$1`, id); return err }
+func (r *pgRateLimitRepo) Delete(ctx context.Context, id string) error {
+	_, err := r.driver.db.ExecContext(ctx, `DELETE FROM rate_limits WHERE id=$1`, id)
+	return err
+}
 
 type pgQuotaRepo struct{ driver *pgDriver }
 
@@ -727,22 +901,33 @@ func (r *pgQuotaRepo) FindByID(ctx context.Context, id string) (*Quota, error) {
 	row := r.driver.db.QueryRowContext(ctx, `SELECT id,user_id,monthly_token_cap,monthly_cost_cap,used_tokens,used_cost,reset_at,created_at,updated_at FROM quotas WHERE id=$1`, id)
 	q := &Quota{}
 	err := row.Scan(&q.ID, &q.UserID, &q.MonthlyTokenCap, &q.MonthlyCostCap, &q.UsedTokens, &q.UsedCost, &q.ResetAt, &q.CreatedAt, &q.UpdatedAt)
-	if err == sql.ErrNoRows { return nil, nil }
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
 	return q, err
 }
 func (r *pgQuotaRepo) FindByUserID(ctx context.Context, userID string) (*Quota, error) {
 	row := r.driver.db.QueryRowContext(ctx, `SELECT id,user_id,monthly_token_cap,monthly_cost_cap,used_tokens,used_cost,reset_at,created_at,updated_at FROM quotas WHERE user_id=$1`, userID)
 	q := &Quota{}
 	err := row.Scan(&q.ID, &q.UserID, &q.MonthlyTokenCap, &q.MonthlyCostCap, &q.UsedTokens, &q.UsedCost, &q.ResetAt, &q.CreatedAt, &q.UpdatedAt)
-	if err == sql.ErrNoRows { return nil, nil }
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
 	return q, err
 }
 func (r *pgQuotaRepo) List(ctx context.Context) ([]*Quota, error) {
 	rows, err := r.driver.db.QueryContext(ctx, `SELECT id,user_id,monthly_token_cap,monthly_cost_cap,used_tokens,used_cost,reset_at,created_at,updated_at FROM quotas`)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 	var result []*Quota
-	for rows.Next() { q := &Quota{}; if rows.Scan(&q.ID, &q.UserID, &q.MonthlyTokenCap, &q.MonthlyCostCap, &q.UsedTokens, &q.UsedCost, &q.ResetAt, &q.CreatedAt, &q.UpdatedAt) == nil { result = append(result, q) } }
+	for rows.Next() {
+		q := &Quota{}
+		if rows.Scan(&q.ID, &q.UserID, &q.MonthlyTokenCap, &q.MonthlyCostCap, &q.UsedTokens, &q.UsedCost, &q.ResetAt, &q.CreatedAt, &q.UpdatedAt) == nil {
+			result = append(result, q)
+		}
+	}
 	return result, rows.Err()
 }
 func (r *pgQuotaRepo) Update(ctx context.Context, q *Quota) error {
@@ -762,7 +947,10 @@ func (r *pgQuotaRepo) ResetMonthly(ctx context.Context, userID string) error {
 		userID)
 	return err
 }
-func (r *pgQuotaRepo) Delete(ctx context.Context, id string) error { _, err := r.driver.db.ExecContext(ctx, `DELETE FROM quotas WHERE id=$1`, id); return err }
+func (r *pgQuotaRepo) Delete(ctx context.Context, id string) error {
+	_, err := r.driver.db.ExecContext(ctx, `DELETE FROM quotas WHERE id=$1`, id)
+	return err
+}
 
 type pgAliasRepo struct{ driver *pgDriver }
 
@@ -775,34 +963,55 @@ func (r *pgAliasRepo) FindByID(ctx context.Context, id string) (*ModelAlias, err
 	row := r.driver.db.QueryRowContext(ctx, `SELECT id,name,target_id,provider,description,user_id,created_by,created_at FROM model_aliases WHERE id=$1`, id)
 	a := &ModelAlias{}
 	err := row.Scan(&a.ID, &a.Name, &a.TargetID, &a.Provider, &a.Description, &a.UserID, &a.CreatedBy, &a.CreatedAt)
-	if err == sql.ErrNoRows { return nil, nil }
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
 	return a, err
 }
 func (r *pgAliasRepo) FindByName(ctx context.Context, name string) (*ModelAlias, error) {
 	row := r.driver.db.QueryRowContext(ctx, `SELECT id,name,target_id,provider,description,user_id,created_by,created_at FROM model_aliases WHERE name=$1`, name)
 	a := &ModelAlias{}
 	err := row.Scan(&a.ID, &a.Name, &a.TargetID, &a.Provider, &a.Description, &a.UserID, &a.CreatedBy, &a.CreatedAt)
-	if err == sql.ErrNoRows { return nil, nil }
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
 	return a, err
 }
 func (r *pgAliasRepo) FindByUser(ctx context.Context, userID string) ([]*ModelAlias, error) {
 	rows, err := r.driver.db.QueryContext(ctx, `SELECT id,name,target_id,provider,description,user_id,created_by,created_at FROM model_aliases WHERE user_id=$1`, userID)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 	var result []*ModelAlias
-	for rows.Next() { a := &ModelAlias{}; if rows.Scan(&a.ID, &a.Name, &a.TargetID, &a.Provider, &a.Description, &a.UserID, &a.CreatedBy, &a.CreatedAt) == nil { result = append(result, a) } }
+	for rows.Next() {
+		a := &ModelAlias{}
+		if rows.Scan(&a.ID, &a.Name, &a.TargetID, &a.Provider, &a.Description, &a.UserID, &a.CreatedBy, &a.CreatedAt) == nil {
+			result = append(result, a)
+		}
+	}
 	return result, rows.Err()
 }
 func (r *pgAliasRepo) ListGlobal(ctx context.Context) ([]*ModelAlias, error) {
 	rows, err := r.driver.db.QueryContext(ctx, `SELECT id,name,target_id,provider,description,user_id,created_by,created_at FROM model_aliases WHERE user_id=''`)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 	var result []*ModelAlias
-	for rows.Next() { a := &ModelAlias{}; if rows.Scan(&a.ID, &a.Name, &a.TargetID, &a.Provider, &a.Description, &a.UserID, &a.CreatedBy, &a.CreatedAt) == nil { result = append(result, a) } }
+	for rows.Next() {
+		a := &ModelAlias{}
+		if rows.Scan(&a.ID, &a.Name, &a.TargetID, &a.Provider, &a.Description, &a.UserID, &a.CreatedBy, &a.CreatedAt) == nil {
+			result = append(result, a)
+		}
+	}
 	return result, rows.Err()
 }
 func (r *pgAliasRepo) Update(ctx context.Context, a *ModelAlias) error {
 	_, err := r.driver.db.ExecContext(ctx, `UPDATE model_aliases SET name=$1,target_id=$2,provider=$3,description=$4 WHERE id=$5`, a.Name, a.TargetID, a.Provider, a.Description, a.ID)
 	return err
 }
-func (r *pgAliasRepo) Delete(ctx context.Context, id string) error { _, err := r.driver.db.ExecContext(ctx, `DELETE FROM model_aliases WHERE id=$1`, id); return err }
+func (r *pgAliasRepo) Delete(ctx context.Context, id string) error {
+	_, err := r.driver.db.ExecContext(ctx, `DELETE FROM model_aliases WHERE id=$1`, id)
+	return err
+}

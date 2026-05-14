@@ -3,21 +3,28 @@ package translator
 import "net/http"
 
 type NormalizedChatRequest struct {
-	Model       string                 `json:"model"`
-	Messages    []NormalizedMessage    `json:"messages"`
-	Stream      bool                   `json:"stream"`
-	Temperature *float64               `json:"temperature,omitempty"`
-	MaxTokens   *int                   `json:"max_tokens,omitempty"`
-	TopP        *float64               `json:"top_p,omitempty"`
-	Stop        interface{}            `json:"stop,omitempty"`
-	Tools       interface{}            `json:"tools,omitempty"`
-	Extra       map[string]interface{} `json:"-"`
+	Model            string                 `json:"model"`
+	Messages         []NormalizedMessage    `json:"messages"`
+	Stream           bool                   `json:"stream"`
+	Temperature      *float64               `json:"temperature,omitempty"`
+	MaxTokens        *int                   `json:"max_tokens,omitempty"`
+	TopP             *float64               `json:"top_p,omitempty"`
+	FrequencyPenalty *float64               `json:"frequency_penalty,omitempty"`
+	PresencePenalty  *float64               `json:"presence_penalty,omitempty"`
+	Stop             interface{}            `json:"stop,omitempty"`
+	N                *int                   `json:"n,omitempty"`
+	Logprobs         *bool                  `json:"logprobs,omitempty"`
+	TopLogprobs      *int                   `json:"top_logprobs,omitempty"`
+	Tools            interface{}            `json:"tools,omitempty"`
+	Extra            map[string]interface{} `json:"-"`
 }
 
 type NormalizedMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-	Name    string `json:"name,omitempty"`
+	Role       string      `json:"role"`
+	Content    string      `json:"content"`
+	Name       string      `json:"name,omitempty"`
+	ToolCalls  interface{} `json:"tool_calls,omitempty"`
+	ToolChoice interface{} `json:"tool_choice,omitempty"`
 }
 
 type NormalizedChatResponse struct {

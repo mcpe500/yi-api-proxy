@@ -36,9 +36,16 @@ func generateToken(apiKey string) (string, error) {
 
 	ts := time.Now().UnixMilli()
 	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","sign_type":"SIGN"}`))
-	payload := base64.RawURLEncoding.EncodeToString([]byte(
-		fmt.Sprintf(`{"api_key":"%s","exp":%d,"timestamp":%d}`, parts[0], ts+3600000, ts),
-	))
+	payloadObj := map[string]interface{}{
+		"api_key":   parts[0],
+		"exp":       ts + 3600000,
+		"timestamp": ts,
+	}
+	payloadBytes, err := json.Marshal(payloadObj)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal token payload: %w", err)
+	}
+	payload := base64.RawURLEncoding.EncodeToString(payloadBytes)
 
 	h := hmac.New(sha256.New, []byte(parts[1]))
 	h.Write([]byte(header + "." + payload))
@@ -158,7 +165,9 @@ func (a *GLMAdapter) ParseEmbeddingResponse(resp *http.Response) (interface{}, e
 		return nil, err
 	}
 	var result interface{}
-	json.Unmarshal(body, &result)
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse embedding response: %w", err)
+	}
 	return result, nil
 }
 

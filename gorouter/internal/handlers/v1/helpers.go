@@ -1,6 +1,7 @@
 package v1
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -28,6 +29,30 @@ func writeError(w http.ResponseWriter, message, errType, code string, status int
 		},
 	})
 }
+
+func writeSSEError(w http.ResponseWriter, message string) {
+	data, _ := json.Marshal(map[string]string{"error": message})
+	w.Write([]byte("data: "))
+	w.Write(data)
+	w.Write([]byte("\n\n"))
+	if flusher, ok := w.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+type captureWriter struct {
+	code    int
+	headers http.Header
+	buf     bytes.Buffer
+}
+
+func newCaptureWriter() *captureWriter {
+	return &captureWriter{code: 200, headers: make(http.Header)}
+}
+
+func (cw *captureWriter) Header() http.Header        { return cw.headers }
+func (cw *captureWriter) Write(b []byte) (int, error) { return cw.buf.Write(b) }
+func (cw *captureWriter) WriteHeader(code int)        { cw.code = code }
 
 func errorTypeForStatus(status int) string {
 	switch status {

@@ -2,6 +2,7 @@ package streaming
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -38,10 +39,6 @@ func FormatChunk(id, model, content string, created int64) []byte {
 				Index: 0,
 				Delta: Delta{Content: content},
 			},
-			{
-				Index:       0,
-				FinishReason: nil,
-			},
 		},
 	}
 	data, _ := json.Marshal(chunk)
@@ -59,14 +56,20 @@ func WriteSSEHeaders(w http.ResponseWriter) {
 	w.Header().Set("X-Accel-Buffering", "no")
 }
 
-func StreamResponse(w http.ResponseWriter, upstream io.Reader) error {
+func StreamResponse(ctx context.Context, w http.ResponseWriter, upstream io.Reader) error {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		return fmt.Errorf("streaming not supported")
 	}
 
 	scanner := bufio.NewScanner(upstream)
+	scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024)
 	for scanner.Scan() {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
 		line := scanner.Text()
 		if strings.HasPrefix(line, "data: ") {
 			data := strings.TrimPrefix(line, "data: ")
@@ -76,6 +79,9 @@ func StreamResponse(w http.ResponseWriter, upstream io.Reader) error {
 				return nil
 			}
 			fmt.Fprintf(w, "data: %s\n\n", data)
+			flusher.Flush()
+		} else if line == "" {
+			fmt.Fprint(w, "\n")
 			flusher.Flush()
 		}
 	}

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -142,6 +143,12 @@ func (h *ProviderHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "api_key or base_url is required"})
 		return
 	}
+	if req.BaseURL != "" {
+		if _, err := url.Parse(req.BaseURL); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "base_url is not a valid URL"})
+			return
+		}
+	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
@@ -212,6 +219,10 @@ func (h *ProviderHandler) Update(w http.ResponseWriter, r *http.Request) {
 		conn.Name = req.Name
 	}
 	if req.BaseURL != "" {
+		if _, err := url.Parse(req.BaseURL); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "base_url is not a valid URL"})
+			return
+		}
 		conn.BaseURL = req.BaseURL
 	}
 	if req.Priority > 0 {

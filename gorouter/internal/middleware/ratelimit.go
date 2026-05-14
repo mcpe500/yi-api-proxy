@@ -214,8 +214,8 @@ func (rl *RateLimiter) cleanupLoop() {
 		cutoff := time.Now().Add(-24 * time.Hour).Unix()
 		for userID, w := range rl.window {
 			w.mu.Lock()
-			cleanOld(w.minute, cutoff)
-			cleanOld(w.daily, cutoff)
+			w.minute = filterTimestamps(w.minute, cutoff)
+			w.daily = filterTimestamps(w.daily, cutoff)
 			w.cleanTokens(cutoff)
 			if len(w.minute) == 0 && len(w.daily) == 0 && len(w.tokens) == 0 {
 				delete(rl.window, userID)
@@ -286,15 +286,6 @@ func (rl *RateLimiter) RecordTokenUsage(userID string, count int) {
 	now := time.Now().Unix()
 	window.cleanTokens(now)
 	window.tokens = append(window.tokens, tokenEntry{timestamp: now, count: count})
-}
-
-func cleanOld(timestamps []int64, cutoff int64) {
-	for i := 0; i < len(timestamps); i++ {
-		if timestamps[i] < cutoff {
-			timestamps = append(timestamps[:i], timestamps[i+1:]...)
-			i--
-		}
-	}
 }
 
 func getUserIDFromContext(ctx context.Context) string {

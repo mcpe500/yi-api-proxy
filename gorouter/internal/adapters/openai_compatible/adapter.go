@@ -126,7 +126,9 @@ func (a *OpenAICompatibleAdapter) ParseEmbeddingResponse(resp *http.Response) (i
 		return nil, err
 	}
 	var result interface{}
-	json.Unmarshal(body, &result)
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse embedding response: %w", err)
+	}
 	return result, nil
 }
 

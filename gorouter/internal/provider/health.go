@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gorouter/gorouter/internal/crypto"
 	"github.com/gorouter/gorouter/internal/db"
 )
 
@@ -79,9 +80,15 @@ func (h *HealthMonitor) checkProvider(p *db.ProviderConnection) {
 		return
 	}
 
+	apiKey, err := crypto.Decrypt(string(p.EncryptedSecret))
+	if err != nil || apiKey == "" {
+		h.recordFailure(p.ID, "health_check: failed to decrypt secret")
+		return
+	}
+
 	start := time.Now()
 	req, _ := http.NewRequest(http.MethodGet, baseURL+"/v1/models", nil)
-	req.Header.Set("Authorization", "Bearer test")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
 
 	resp, err := h.httpClient.Do(req)
 	latency := int(time.Since(start).Milliseconds())
@@ -92,14 +99,14 @@ func (h *HealthMonitor) checkProvider(p *db.ProviderConnection) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 500 {
-		h.recordLatency(p.ID, latency)
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		h.recordSuccess(p.ID, latency)
 	} else {
 		h.recordFailure(p.ID, fmt.Sprintf("HTTP %d", resp.StatusCode))
 	}
 }
 
-func (h *HealthMonitor) recordLatency(providerID string, latencyMs int) {
+func (h *HealthMonitor) recordSuccess(providerID string, latencyMs int) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -109,6 +116,14 @@ func (h *HealthMonitor) recordLatency(providerID string, latencyMs int) {
 	}
 
 	p.LastLatencyMs = latencyMs
+	p.LastError = ""
+	p.LastErrorAt = nil
+	now := time.Now()
+	if p.Status == "cooldown" && p.CooldownUntil != nil && now.After(*p.CooldownUntil) {
+		p.Status = "active"
+		p.CooldownUntil = nil
+		p.BackoffLevel = 0
+	}
 	h.db.Providers().Update(ctx, p)
 }
 

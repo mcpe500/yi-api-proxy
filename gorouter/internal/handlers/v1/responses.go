@@ -12,6 +12,7 @@ import (
 	"github.com/gorouter/gorouter/internal/crypto"
 	"github.com/gorouter/gorouter/internal/db"
 	"github.com/gorouter/gorouter/internal/middleware"
+	"github.com/gorouter/gorouter/internal/streaming"
 	"github.com/gorouter/gorouter/internal/translator"
 )
 
@@ -177,8 +178,31 @@ func (h *ResponsesHandler) extractMessages(input interface{}) []ChatMessage {
 }
 
 func (h *ResponsesHandler) handleStreaming(ctx context.Context, w http.ResponseWriter, req *ChatRequest, requestID string, startTime time.Time, originalModel string) {
-	writeError(w, "/v1/responses streaming not yet implemented", "not_implemented", "not_implemented", http.StatusNotImplemented)
+	nonStreamReq := *req
+	nonStreamReq.Stream = false
+
+	cw := newCaptureWriter()
+	providerName, finalModel, statusCode := h.executeDirectRequest(ctx, cw, &nonStreamReq, requestID)
+
+	streaming.WriteSSEHeaders(w)
+	if statusCode == http.StatusOK {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("data: "))
+		w.Write(cw.buf.Bytes())
+		w.Write([]byte("\n\n"))
+		w.Write(streaming.FormatDone())
+	} else {
+		w.WriteHeader(statusCode)
+		w.Write(cw.buf.Bytes())
+	}
+
+	if flusher, ok := w.(http.Flusher); ok {
+		flusher.Flush()
+	}
+
+	h.recordUsage(ctx, req, startTime, true, statusCode, finalModel, providerName, originalModel)
 }
+
 
 func (h *ResponsesHandler) handleNonStreaming(ctx context.Context, w http.ResponseWriter, req *ChatRequest, requestID string, startTime time.Time, originalModel string) {
 	providerName, finalModel, statusCode := h.executeDirectRequest(ctx, w, req, requestID)

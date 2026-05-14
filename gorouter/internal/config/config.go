@@ -1,6 +1,8 @@
 package config
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"strconv"
@@ -24,6 +26,7 @@ type AppConfig struct {
 	AuditLogRetentionDays   int
 	IsProduction            bool
 	RoutingStrategy         string
+	AllowedOrigins          []string
 }
 
 func Load() *AppConfig {
@@ -46,12 +49,23 @@ func Load() *AppConfig {
 	cfg.RoutingStrategy = getEnv("GOROUTER_ROUTING_STRATEGY", "priority")
 	cfg.IsProduction = getEnv("APP_ENV", "development") == "production"
 
+	origins := getEnv("GOROUTER_ALLOWED_ORIGINS", "*")
+	if origins == "*" {
+		cfg.AllowedOrigins = []string{"*"}
+	} else {
+		cfg.AllowedOrigins = strings.Split(origins, ",")
+	}
+
 	if !isValidStrategy(cfg.RoutingStrategy) {
 		cfg.RoutingStrategy = "priority"
 	}
 
 	if cfg.SessionSecret == "" && cfg.IsProduction {
-		cfg.SessionSecret = mustGenerateOrPanic("GOROUTER_SESSION_SECRET")
+		fmt.Println("CRITICAL: GOROUTER_SESSION_SECRET is not set in production. Forcing shutdown for security.")
+		os.Exit(1)
+	}
+	if cfg.SessionSecret == "" {
+		cfg.SessionSecret = "dev-secret-change-me"
 	}
 	if cfg.SecretEncryptionKey == "" {
 		cfg.SecretEncryptionKey = getEnv("SECRET_ENCRYPTION_KEY", "")
@@ -69,6 +83,18 @@ func (c *AppConfig) Validate() error {
 	}
 	if c.BootstrapAdminEmail != "" && c.BootstrapAdminPassword == "" {
 		return fmt.Errorf("GOROUTER_BOOTSTRAP_ADMIN_PASSWORD is required when GOROUTER_BOOTSTRAP_ADMIN_EMAIL is set")
+	}
+	if c.SecretEncryptionKey == "" && c.IsProduction {
+		return fmt.Errorf("GOROUTER_SECRET_ENCRYPTION_KEY is required in production for secure provider secret storage")
+	}
+	if c.UsageRetentionDays < 1 {
+		return fmt.Errorf("GOROUTER_USAGE_RETENTION_DAYS must be at least 1, got %d", c.UsageRetentionDays)
+	}
+	if c.RequestLogRetentionDays < 1 {
+		return fmt.Errorf("GOROUTER_REQUEST_LOG_RETENTION_DAYS must be at least 1, got %d", c.RequestLogRetentionDays)
+	}
+	if c.AuditLogRetentionDays < 1 {
+		return fmt.Errorf("GOROUTER_AUDIT_LOG_RETENTION_DAYS must be at least 1, got %d", c.AuditLogRetentionDays)
 	}
 	return nil
 }
@@ -105,8 +131,11 @@ func getEnvBool(key string, fallback bool) bool {
 }
 
 func mustGenerateOrPanic(key string) string {
-	_ = key
-	return ""
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		panic(fmt.Sprintf("failed to generate %s: %v", key, err))
+	}
+	return hex.EncodeToString(b)
 }
 
 func isValidStrategy(s string) bool {

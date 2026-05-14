@@ -15,7 +15,7 @@ type sqliteDriver struct {
 }
 
 type sqliteDB struct {
-	driver *sqliteDriver
+	driver     *sqliteDriver
 	users      *sqliteUserRepo
 	apiKeys    *sqliteApiKeyRepo
 	providers  *sqliteProviderRepo
@@ -55,17 +55,18 @@ func newSQLiteDriver(dsn string) (DatabaseManager, error) {
 	return sdb, nil
 }
 
-func (s *sqliteDB) Driver() string                { return "sqlite" }
-func (s *sqliteDB) Connect() error                { return s.driver.db.PingContext(context.Background()) }
-func (s *sqliteDB) Close() error                  { return s.driver.db.Close() }
-func (s *sqliteDB) Users() UserRepository          { return s.users }
-func (s *sqliteDB) ApiKeys() ApiKeyRepository      { return s.apiKeys }
-func (s *sqliteDB) Providers() ProviderRepository  { return s.providers }
-func (s *sqliteDB) Models() ModelRepository        { return s.models }
-func (s *sqliteDB) Combos() ComboRepository        { return s.combos }
-func (s *sqliteDB) UsageEvents() UsageRepository   { return s.usage }
-func (s *sqliteDB) AuditLogs() AuditRepository     { return s.audit }
-func (s *sqliteDB) Settings() SettingsRepository   { return s.settings }
+func (s *sqliteDB) Driver() string                  { return "sqlite" }
+func (s *sqliteDB) Connect() error                  { return s.driver.db.PingContext(context.Background()) }
+func (s *sqliteDB) Ping() error                     { return s.driver.db.PingContext(context.Background()) }
+func (s *sqliteDB) Close() error                    { return s.driver.db.Close() }
+func (s *sqliteDB) Users() UserRepository           { return s.users }
+func (s *sqliteDB) ApiKeys() ApiKeyRepository       { return s.apiKeys }
+func (s *sqliteDB) Providers() ProviderRepository   { return s.providers }
+func (s *sqliteDB) Models() ModelRepository         { return s.models }
+func (s *sqliteDB) Combos() ComboRepository         { return s.combos }
+func (s *sqliteDB) UsageEvents() UsageRepository    { return s.usage }
+func (s *sqliteDB) AuditLogs() AuditRepository      { return s.audit }
+func (s *sqliteDB) Settings() SettingsRepository    { return s.settings }
 func (s *sqliteDB) RateLimits() RateLimitRepository { return s.rateLimits }
 func (s *sqliteDB) Quotas() QuotaRepository         { return s.quotas }
 func (s *sqliteDB) Aliases() ModelAliasRepository   { return s.aliases }
@@ -164,7 +165,9 @@ func (d *sqliteDriver) migrate() error {
 			name TEXT NOT NULL UNIQUE,
 			description TEXT NOT NULL DEFAULT '',
 			user_id TEXT NOT NULL,
+			strategy TEXT NOT NULL DEFAULT 'priority',
 			is_active INTEGER NOT NULL DEFAULT 1,
+			created_by TEXT NOT NULL DEFAULT '',
 			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -749,9 +752,9 @@ func (r *sqliteModelRepo) scanModels(rows *sql.Rows) ([]*Model, error) {
 
 func (r *sqliteComboRepo) Create(ctx context.Context, c *Combo) error {
 	_, err := r.driver.db.ExecContext(ctx,
-		`INSERT INTO combos (id, name, description, user_id, is_active, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		c.ID, c.Name, c.Description, c.UserID, c.IsActive, c.CreatedAt, c.UpdatedAt)
+		`INSERT INTO combos (id, name, description, user_id, strategy, is_active, created_by, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		c.ID, c.Name, c.Description, c.UserID, c.Strategy, c.IsActive, c.CreatedBy, c.CreatedAt, c.UpdatedAt)
 	if err != nil {
 		return err
 	}
@@ -765,10 +768,10 @@ func (r *sqliteComboRepo) Create(ctx context.Context, c *Combo) error {
 
 func (r *sqliteComboRepo) FindByID(ctx context.Context, id string) (*Combo, error) {
 	row := r.driver.db.QueryRowContext(ctx,
-		`SELECT id, name, description, user_id, is_active, created_at, updated_at
+		`SELECT id, name, description, user_id, strategy, is_active, created_by, created_at, updated_at
 		 FROM combos WHERE id = ?`, id)
 	c := &Combo{}
-	err := row.Scan(&c.ID, &c.Name, &c.Description, &c.UserID, &c.IsActive, &c.CreatedAt, &c.UpdatedAt)
+	err := row.Scan(&c.ID, &c.Name, &c.Description, &c.UserID, &c.Strategy, &c.IsActive, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -781,10 +784,10 @@ func (r *sqliteComboRepo) FindByID(ctx context.Context, id string) (*Combo, erro
 
 func (r *sqliteComboRepo) FindByName(ctx context.Context, name string) (*Combo, error) {
 	row := r.driver.db.QueryRowContext(ctx,
-		`SELECT id, name, description, user_id, is_active, created_at, updated_at
+		`SELECT id, name, description, user_id, strategy, is_active, created_by, created_at, updated_at
 		 FROM combos WHERE name = ?`, name)
 	c := &Combo{}
-	err := row.Scan(&c.ID, &c.Name, &c.Description, &c.UserID, &c.IsActive, &c.CreatedAt, &c.UpdatedAt)
+	err := row.Scan(&c.ID, &c.Name, &c.Description, &c.UserID, &c.Strategy, &c.IsActive, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -797,7 +800,7 @@ func (r *sqliteComboRepo) FindByName(ctx context.Context, name string) (*Combo, 
 
 func (r *sqliteComboRepo) FindByUser(ctx context.Context, userID string) ([]*Combo, error) {
 	rows, err := r.driver.db.QueryContext(ctx,
-		`SELECT id, name, description, user_id, is_active, created_at, updated_at
+		`SELECT id, name, description, user_id, strategy, is_active, created_by, created_at, updated_at
 		 FROM combos WHERE user_id = ? ORDER BY name`, userID)
 	if err != nil {
 		return nil, err
@@ -808,7 +811,7 @@ func (r *sqliteComboRepo) FindByUser(ctx context.Context, userID string) ([]*Com
 
 func (r *sqliteComboRepo) List(ctx context.Context) ([]*Combo, error) {
 	rows, err := r.driver.db.QueryContext(ctx,
-		`SELECT id, name, description, user_id, is_active, created_at, updated_at
+		`SELECT id, name, description, user_id, strategy, is_active, created_by, created_at, updated_at
 		 FROM combos ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -819,7 +822,7 @@ func (r *sqliteComboRepo) List(ctx context.Context) ([]*Combo, error) {
 
 func (r *sqliteComboRepo) ListEnabled(ctx context.Context) ([]*Combo, error) {
 	rows, err := r.driver.db.QueryContext(ctx,
-		`SELECT id, name, description, user_id, is_active, created_at, updated_at
+		`SELECT id, name, description, user_id, strategy, is_active, created_by, created_at, updated_at
 		 FROM combos WHERE is_active = 1 ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -895,7 +898,7 @@ func (r *sqliteComboRepo) scanCombos(ctx context.Context, rows *sql.Rows) ([]*Co
 	var result []*Combo
 	for rows.Next() {
 		c := &Combo{}
-		err := rows.Scan(&c.ID, &c.Name, &c.Description, &c.UserID, &c.IsActive, &c.CreatedAt, &c.UpdatedAt)
+		err := rows.Scan(&c.ID, &c.Name, &c.Description, &c.UserID, &c.Strategy, &c.IsActive, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt)
 		if err != nil {
 			return nil, err
 		}

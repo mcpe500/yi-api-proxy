@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -14,8 +15,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
-	"github.com/google/uuid"
-
 	_ "github.com/gorouter/gorouter/internal/adapters"
 	"github.com/gorouter/gorouter/internal/apikeys"
 	"github.com/gorouter/gorouter/internal/audit"
@@ -94,7 +93,9 @@ func main() {
 	log := logger.New(cfg.LogLevel)
 	log.Info("Starting gorouter", "version", Version)
 
-	if cfg.SecretEncryptionKey != "" {
+	if cfg.SecretEncryptionKey == "" {
+		log.Warn("GOROUTER_SECRET_ENCRYPTION_KEY is not set; provider secrets will be stored plaintext")
+	} else {
 		if err := crypto.Init(cfg.SecretEncryptionKey); err != nil {
 			log.Error("Failed to initialize crypto", "error", err)
 			os.Exit(1)
@@ -142,23 +143,37 @@ func main() {
 	r.Use(chimw.RealIP)
 	r.Use(chimw.Recoverer)
 	r.Use(chimw.CleanPath)
+
+	allowCreds := !(len(cfg.AllowedOrigins) == 1 && cfg.AllowedOrigins[0] == "*")
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins: []string{"*"},
-		AllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
-		AllowedHeaders: []string{"*"},
-		ExposedHeaders: []string{"X-Request-ID", "X-RateLimit-Remaining"},
-		AllowCredentials: true,
-		MaxAge: 86400,
+		AllowedOrigins:   cfg.AllowedOrigins,
+		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
+		AllowedHeaders:   []string{"*"},
+		ExposedHeaders:   []string{"X-Request-ID", "X-RateLimit-Remaining"},
+		AllowCredentials: allowCreds,
+		MaxAge:           86400,
 	}))
 
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"ok":true,"version":"` + Version + `","db":"ok"}`))
+		dbStatus := "ok"
+		if err := dbManager.Ping(); err != nil {
+			dbStatus = "error"
+		}
+		ok := dbStatus == "ok"
+		if !ok {
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}
+		w.Write([]byte(fmt.Sprintf(`{"ok":%t,"version":"%s","db":"%s"}`, ok, Version, dbStatus)))
 	})
 
 	r.Get("/ready", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"ready":true}`))
+		ready := dbManager.Ping() == nil
+		if !ready {
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}
+		w.Write([]byte(fmt.Sprintf(`{"ready":%t}`, ready)))
 	})
 
 	// --- Auth routes ---
@@ -248,7 +263,9 @@ func main() {
 	})
 
 	r.Route("/v1", func(r chi.Router) {
-		r.Use(ourmw.RequireAPIKey(apiKeySvc))
+		if cfg.RequireAPIKey {
+			r.Use(ourmw.RequireAPIKey(apiKeySvc))
+		}
 		r.Use(rateLimiter.Middleware())
 
 		r.Post("/chat/completions", chatHandler.ServeHTTP)
@@ -296,205 +313,6 @@ func main() {
 	}
 
 	log.Info("Server stopped")
-}
-
-func makeLoginHandler(dbManager db.DatabaseManager, jwtSecret string, log *slog.Logger) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			Email    string `json:"email"`
-			Password string `json:"password"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSONError(w, http.StatusBadRequest, "invalid request body")
-			return
-		}
-
-		user, err := dbManager.Users().FindByEmail(r.Context(), req.Email)
-		if err != nil || user == nil {
-			writeJSONError(w, http.StatusUnauthorized, "invalid credentials")
-			return
-		}
-
-		if !auth.VerifyPassword(req.Password, user.PasswordHash) {
-			writeJSONError(w, http.StatusUnauthorized, "invalid credentials")
-			return
-		}
-
-		if user.Status != "active" {
-			writeJSONError(w, http.StatusForbidden, "account disabled")
-			return
-		}
-
-		_ = dbManager.Users().UpdateLastLogin(r.Context(), user.ID)
-
-		token, err := auth.GenerateToken(user.ID, user.Email, user.Role, jwtSecret, 24*time.Hour)
-		if err != nil {
-			writeJSONError(w, http.StatusInternalServerError, "token generation failed")
-			return
-		}
-
-		http.SetCookie(w, &http.Cookie{
-			Name:     "auth_token",
-			Value:    token,
-			Path:     "/",
-			HttpOnly: true,
-			Secure:   false,
-			SameSite: http.SameSiteLaxMode,
-			MaxAge:   86400,
-		})
-
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"token": token,
-			"user": map[string]string{
-				"id":    user.ID,
-				"email": user.Email,
-				"name":  user.Name,
-				"role":  user.Role,
-			},
-		})
-	}
-}
-
-func makeRefreshHandler(jwtSecret string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		cookie, err := r.Cookie("auth_token")
-		if err != nil {
-			writeJSONError(w, http.StatusUnauthorized, "missing auth token")
-			return
-		}
-
-		claims, err := auth.ValidateToken(cookie.Value, jwtSecret)
-		if err != nil {
-			writeJSONError(w, http.StatusUnauthorized, "invalid token")
-			return
-		}
-
-		token, err := auth.GenerateToken(claims.UserID, claims.Email, claims.Role, jwtSecret, 24*time.Hour)
-		if err != nil {
-			writeJSONError(w, http.StatusInternalServerError, "token generation failed")
-			return
-		}
-
-		http.SetCookie(w, &http.Cookie{
-			Name:     "auth_token",
-			Value:    token,
-			Path:     "/",
-			HttpOnly: true,
-			Secure:   false,
-			SameSite: http.SameSiteLaxMode,
-			MaxAge:   86400,
-		})
-
-		writeJSON(w, http.StatusOK, map[string]string{"token": token})
-	}
-}
-
-func makeAdminUsersRoutes(dbManager db.DatabaseManager) func(chi.Router) {
-	return func(r chi.Router) {
-		r.Get("/", func(w http.ResponseWriter, r *http.Request) {
-			users, err := dbManager.Users().List(r.Context(), db.UserFilter{})
-			if err != nil {
-				writeJSONError(w, http.StatusInternalServerError, err.Error())
-				return
-			}
-			for _, u := range users {
-				u.PasswordHash = ""
-			}
-			writeJSON(w, http.StatusOK, map[string]interface{}{"data": users, "total": len(users)})
-		})
-
-		r.Post("/", func(w http.ResponseWriter, r *http.Request) {
-			var req struct {
-				Email    string `json:"email"`
-				Name     string `json:"name"`
-				Password string `json:"password"`
-				Role     string `json:"role"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				writeJSONError(w, http.StatusBadRequest, "invalid request body")
-				return
-			}
-			if req.Email == "" || req.Password == "" {
-				writeJSONError(w, http.StatusBadRequest, "email and password required")
-				return
-			}
-			hash, err := auth.HashPassword(req.Password)
-			if err != nil {
-				writeJSONError(w, http.StatusInternalServerError, "password hash failed")
-				return
-			}
-			user := &db.User{
-				ID:           uuid.New().String(),
-				Email:        req.Email,
-				Name:         req.Name,
-				Role:         req.Role,
-				Status:       "active",
-				PasswordHash: hash,
-			}
-			if user.Role == "" {
-				user.Role = "user"
-			}
-			if err := dbManager.Users().Create(r.Context(), user); err != nil {
-				writeJSONError(w, http.StatusInternalServerError, err.Error())
-				return
-			}
-			user.PasswordHash = ""
-			writeJSON(w, http.StatusCreated, user)
-		})
-
-		r.Get("/{id}", func(w http.ResponseWriter, r *http.Request) {
-			id := chi.URLParam(r, "id")
-			user, err := dbManager.Users().FindByID(r.Context(), id)
-			if err != nil || user == nil {
-				writeJSONError(w, http.StatusNotFound, "user not found")
-				return
-			}
-			user.PasswordHash = ""
-			writeJSON(w, http.StatusOK, user)
-		})
-
-		r.Put("/{id}", func(w http.ResponseWriter, r *http.Request) {
-			id := chi.URLParam(r, "id")
-			user, err := dbManager.Users().FindByID(r.Context(), id)
-			if err != nil || user == nil {
-				writeJSONError(w, http.StatusNotFound, "user not found")
-				return
-			}
-			var req struct {
-				Name   string `json:"name"`
-				Role   string `json:"role"`
-				Status string `json:"status"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				writeJSONError(w, http.StatusBadRequest, "invalid request body")
-				return
-			}
-			if req.Name != "" {
-				user.Name = req.Name
-			}
-			if req.Role != "" {
-				user.Role = req.Role
-			}
-			if req.Status != "" {
-				user.Status = req.Status
-			}
-			if err := dbManager.Users().Update(r.Context(), user); err != nil {
-				writeJSONError(w, http.StatusInternalServerError, err.Error())
-				return
-			}
-			user.PasswordHash = ""
-			writeJSON(w, http.StatusOK, user)
-		})
-
-		r.Delete("/{id}", func(w http.ResponseWriter, r *http.Request) {
-			id := chi.URLParam(r, "id")
-			if err := dbManager.Users().Delete(r.Context(), id); err != nil {
-				writeJSONError(w, http.StatusInternalServerError, err.Error())
-				return
-			}
-			writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
-		})
-	}
 }
 
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {

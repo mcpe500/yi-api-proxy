@@ -126,7 +126,9 @@ func (a *MiniMaxAdapter) ParseEmbeddingResponse(resp *http.Response) (interface{
 		return nil, err
 	}
 	var result interface{}
-	json.Unmarshal(body, &result)
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse embedding response: %w", err)
+	}
 	return result, nil
 }
 

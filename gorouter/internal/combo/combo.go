@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/gorouter/gorouter/internal/crypto"
 	"github.com/gorouter/gorouter/internal/db"
 	"github.com/gorouter/gorouter/internal/translator"
 )
@@ -212,7 +213,17 @@ func (m *ComboManager) executeItem(ctx context.Context, item *db.ComboItem, req 
 		}, nil
 	}
 
-	apiKey := string(provider.EncryptedSecret)
+	apiKey, err := crypto.Decrypt(string(provider.EncryptedSecret))
+	if err != nil {
+		return &itemResult{
+			Success:          false,
+			FallbackEligible: true,
+			Error: &ExecuteError{
+				Code:    "decrypt_error",
+				Message: "failed to decrypt provider secret",
+			},
+		}, nil
+	}
 
 	normReq := &translator.NormalizedChatRequest{
 		Model:    item.ModelID,

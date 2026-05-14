@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"strings"
 
 	"github.com/golang-jwt/jwt/v5"
 )
@@ -125,57 +124,4 @@ func RequireAdmin() func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
-}
-
-func APIKeyAuth(cfg *APIKeyConfig) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !cfg.RequireAPIKey {
-				next.ServeHTTP(w, r)
-				return
-			}
-
-			apiKey := extractAPIKey(r)
-			if apiKey == "" {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusUnauthorized)
-				json.NewEncoder(w).Encode(ErrorResponse{
-					Error: ErrorDetail{
-						Message: "Missing API key. Provide Authorization: Bearer <key>",
-						Type:    "authentication_error",
-						Code:    "invalid_api_key",
-					},
-				})
-				return
-			}
-
-			if _, ok := cfg.ValidKeys[apiKey]; !ok {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusUnauthorized)
-				json.NewEncoder(w).Encode(ErrorResponse{
-					Error: ErrorDetail{
-						Message: "Invalid API key",
-						Type:    "authentication_error",
-						Code:    "invalid_api_key",
-					},
-				})
-				return
-			}
-
-			next.ServeHTTP(w, r)
-		})
-	}
-}
-
-func extractAPIKey(r *http.Request) string {
-	auth := r.Header.Get("Authorization")
-	if strings.HasPrefix(auth, "Bearer ") {
-		return strings.TrimPrefix(auth, "Bearer ")
-	}
-
-	if auth != "" {
-		return auth
-	}
-
-	return r.Header.Get("X-API-Key")
 }

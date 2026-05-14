@@ -300,7 +300,24 @@ func (h *UserCombosHandler) ReorderComboItems(w http.ResponseWriter, r *http.Req
 }
 
 func (h *UserCombosHandler) ExecuteCombo(w http.ResponseWriter, r *http.Request) {
+	user := middleware.GetUserFromContext(r.Context())
+	if user == nil {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+
 	comboID := chi.URLParam(r, "id")
+
+	c, err := h.cm.GetCombo(r.Context(), comboID)
+	if err != nil || c == nil {
+		http.Error(w, `{"error":"combo not found"}`, http.StatusNotFound)
+		return
+	}
+
+	if c.UserID != user.UserID && c.UserID != "" && user.Role != "admin" {
+		http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+		return
+	}
 
 	var req combo.ExecuteRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

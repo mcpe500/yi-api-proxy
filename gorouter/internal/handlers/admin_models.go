@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -88,6 +89,10 @@ func (h *ModelHandler) CreateModel(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "model_id is required"})
 		return
 	}
+	if req.InputCostPer1k < 0 || req.OutputCostPer1k < 0 || math.IsNaN(req.InputCostPer1k) || math.IsNaN(req.OutputCostPer1k) || math.IsInf(req.InputCostPer1k, 0) || math.IsInf(req.OutputCostPer1k, 0) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "input_cost_per_1k and output_cost_per_1k must be non-negative finite numbers"})
+		return
+	}
 
 	model := &db.Model{
 		ID:               uuid.New().String(),
@@ -133,6 +138,10 @@ func (h *ModelHandler) UpdateModel(w http.ResponseWriter, r *http.Request) {
 	var req CreateModelRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	if req.InputCostPer1k < 0 || req.OutputCostPer1k < 0 || math.IsNaN(req.InputCostPer1k) || math.IsNaN(req.OutputCostPer1k) || math.IsInf(req.InputCostPer1k, 0) || math.IsInf(req.OutputCostPer1k, 0) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "input_cost_per_1k and output_cost_per_1k must be non-negative finite numbers"})
 		return
 	}
 	existing.ProviderID = req.ProviderID
