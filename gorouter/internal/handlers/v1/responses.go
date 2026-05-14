@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gorouter/gorouter/internal/combo"
+	"github.com/gorouter/gorouter/internal/crypto"
 	"github.com/gorouter/gorouter/internal/db"
 	"github.com/gorouter/gorouter/internal/middleware"
 	"github.com/gorouter/gorouter/internal/translator"
@@ -218,7 +219,11 @@ func (h *ResponsesHandler) executeDirectRequest(ctx context.Context, w http.Resp
 		return providerConn.Provider, targetModel.ModelID, http.StatusServiceUnavailable
 	}
 
-	apiKey := string(providerConn.EncryptedSecret)
+	decryptedKey, err := crypto.Decrypt(string(providerConn.EncryptedSecret))
+	if err != nil {
+		writeError(w, "failed to decrypt provider secret", "upstream_error", "auth_error", http.StatusServiceUnavailable)
+		return providerConn.Provider, targetModel.ModelID, http.StatusServiceUnavailable
+	}
 
 	normReq := &translator.NormalizedChatRequest{
 		Model:    targetModel.ModelID,
@@ -236,7 +241,7 @@ func (h *ResponsesHandler) executeDirectRequest(ctx context.Context, w http.Resp
 		normReq.TopP = req.TopP
 	}
 
-	httpReq, err := adapter.TranslateRequest(normReq, providerConn.BaseURL, apiKey)
+	httpReq, err := adapter.TranslateRequest(normReq, providerConn.BaseURL, decryptedKey)
 	if err != nil {
 		writeError(w, "failed to translate request", "upstream_error", "translate_error", http.StatusBadGateway)
 		return providerConn.Provider, targetModel.ModelID, http.StatusBadGateway

@@ -33,11 +33,16 @@ type cachedLimit struct {
 	expiry     time.Time
 }
 
+type tokenEntry struct {
+	timestamp int64
+	count     int
+}
+
 type slidingWindow struct {
 	mu       sync.Mutex
 	minute   []int64
 	daily    []int64
-	tokens   []int64
+	tokens   []tokenEntry
 }
 
 func NewRateLimiter(cfg *RateLimitConfig) *RateLimiter {
@@ -115,9 +120,9 @@ func (rl *RateLimiter) checkLimits(userID string) (bool, int, string) {
 
 	if limit.TokensPerMinute > 0 {
 		window.cleanTokens(now)
-		tokenCount := countInWindow(window.tokens, now, 60)
+		tokenCount := window.sumTokens(now, 60)
 		if tokenCount >= limit.TokensPerMinute {
-			retry := int(60 - (now - window.tokens[0]))
+			retry := int(60 - (now - window.tokens[0].timestamp))
 			if retry < 1 {
 				retry = 1
 			}
@@ -125,10 +130,8 @@ func (rl *RateLimiter) checkLimits(userID string) (bool, int, string) {
 		}
 	}
 
-	nowMs := time.Now().UnixMilli()
-	window.minute = append(window.minute, nowMs)
-	window.daily = append(window.daily, nowMs)
-	window.tokens = append(window.tokens, nowMs)
+	window.minute = append(window.minute, now)
+	window.daily = append(window.daily, now)
 
 	return true, 0, ""
 }
@@ -187,7 +190,7 @@ func (rl *RateLimiter) getWindow(userID string) *slidingWindow {
 	w = &slidingWindow{
 		minute: make([]int64, 0, 60),
 		daily:  make([]int64, 0, 86400),
-		tokens: make([]int64, 0, 60),
+		tokens: make([]tokenEntry, 0, 60),
 	}
 	rl.window[userID] = w
 	return w
@@ -213,7 +216,7 @@ func (rl *RateLimiter) cleanupLoop() {
 			w.mu.Lock()
 			cleanOld(w.minute, cutoff)
 			cleanOld(w.daily, cutoff)
-			cleanOld(w.tokens, cutoff)
+			w.cleanTokens(cutoff)
 			if len(w.minute) == 0 && len(w.daily) == 0 && len(w.tokens) == 0 {
 				delete(rl.window, userID)
 			}
@@ -235,7 +238,13 @@ func (w *slidingWindow) cleanDaily(now int64) {
 
 func (w *slidingWindow) cleanTokens(now int64) {
 	cutoff := now - 60
-	w.tokens = filterTimestamps(w.tokens, cutoff)
+	result := make([]tokenEntry, 0, len(w.tokens))
+	for _, e := range w.tokens {
+		if e.timestamp >= cutoff {
+			result = append(result, e)
+		}
+	}
+	w.tokens = result
 }
 
 func countInWindow(timestamps []int64, now int64, windowSec int) int {
@@ -257,6 +266,26 @@ func filterTimestamps(timestamps []int64, cutoff int64) []int64 {
 		}
 	}
 	return result
+}
+
+func (w *slidingWindow) sumTokens(now int64, windowSec int) int {
+	cutoff := now - int64(windowSec)
+	total := 0
+	for _, e := range w.tokens {
+		if e.timestamp >= cutoff {
+			total += e.count
+		}
+	}
+	return total
+}
+
+func (rl *RateLimiter) RecordTokenUsage(userID string, count int) {
+	window := rl.getWindow(userID)
+	window.mu.Lock()
+	defer window.mu.Unlock()
+	now := time.Now().Unix()
+	window.cleanTokens(now)
+	window.tokens = append(window.tokens, tokenEntry{timestamp: now, count: count})
 }
 
 func cleanOld(timestamps []int64, cutoff int64) {
@@ -296,7 +325,6 @@ func getUserIDFromContext(ctx context.Context) string {
 
 func TrackTokenUsage(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = getUserIDFromContext(r.Context())
 		next.ServeHTTP(w, r)
 	})
 }

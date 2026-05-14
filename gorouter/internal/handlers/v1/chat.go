@@ -3,6 +3,7 @@ package v1
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -207,85 +208,114 @@ func (h *ChatHandler) executeDirectRequest(ctx context.Context, w http.ResponseW
 		return "", req.Model, http.StatusBadRequest
 	}
 
-	var providerConn *db.ProviderConnection
-
+	var candidates []*db.ProviderConnection
 	if h.Router != nil {
-		providerConn, err = h.Router.SelectProviderForModel(ctx, targetModel.ModelID)
-		if err != nil || providerConn == nil {
-			providerConn, err = h.DB.Providers().FindByID(ctx, targetModel.ProviderID)
+		candidates, err = h.Router.SelectProvidersForModel(ctx, targetModel.ModelID)
+		if err != nil || len(candidates) == 0 {
+			candidates = nil
 		}
-	} else {
-		providerConn, err = h.DB.Providers().FindByID(ctx, targetModel.ProviderID)
 	}
 
-	if err != nil || providerConn == nil {
-		writeError(w, "provider not found", "upstream_error", "provider_not_found", http.StatusServiceUnavailable)
-		return "", targetModel.ModelID, http.StatusServiceUnavailable
+	if len(candidates) == 0 {
+		providerConn, err := h.DB.Providers().FindByID(ctx, targetModel.ProviderID)
+		if err != nil || providerConn == nil {
+			writeError(w, "provider not found", "upstream_error", "provider_not_found", http.StatusServiceUnavailable)
+			return "", targetModel.ModelID, http.StatusServiceUnavailable
+		}
+		candidates = []*db.ProviderConnection{providerConn}
 	}
 
-	adapter, err := translator.Get(providerConn.Provider)
-	if err != nil {
-		writeError(w, "adapter not found for provider: "+providerConn.Provider, "upstream_error", "adapter_error", http.StatusServiceUnavailable)
-		return providerConn.Provider, targetModel.ModelID, http.StatusServiceUnavailable
-	}
+	var lastErr string
+	for attempt, providerConn := range candidates {
+		if attempt >= 3 {
+			break
+		}
 
-	decryptedKey, err := crypto.Decrypt(string(providerConn.EncryptedSecret))
-	if err != nil {
-		writeError(w, "failed to decrypt provider secret", "upstream_error", "auth_error", http.StatusServiceUnavailable)
-		return providerConn.Provider, targetModel.ModelID, http.StatusServiceUnavailable
-	}
+		adapter, err := translator.Get(providerConn.Provider)
+		if err != nil {
+			lastErr = "adapter not found for provider: " + providerConn.Provider
+			continue
+		}
 
-	normReq := &translator.NormalizedChatRequest{
-		Model:    targetModel.ModelID,
-		Messages: convertChatMessages(req.Messages),
-		Stream:   req.Stream,
-	}
+		decryptedKey, err := crypto.Decrypt(string(providerConn.EncryptedSecret))
+		if err != nil {
+			lastErr = "failed to decrypt provider secret"
+			continue
+		}
 
-	if req.Temperature != nil {
-		normReq.Temperature = req.Temperature
-	}
-	if req.MaxTokens != nil {
-		normReq.MaxTokens = req.MaxTokens
-	}
-	if req.TopP != nil {
-		normReq.TopP = req.TopP
-	}
+		normReq := &translator.NormalizedChatRequest{
+			Model:    targetModel.ModelID,
+			Messages: convertChatMessages(req.Messages),
+			Stream:   req.Stream,
+		}
 
-	httpReq, err := adapter.TranslateRequest(normReq, providerConn.BaseURL, decryptedKey)
-	if err != nil {
-		writeError(w, "failed to translate request", "upstream_error", "translate_error", http.StatusBadGateway)
-		return providerConn.Provider, targetModel.ModelID, http.StatusBadGateway
-	}
+		if req.Temperature != nil {
+			normReq.Temperature = req.Temperature
+		}
+		if req.MaxTokens != nil {
+			normReq.MaxTokens = req.MaxTokens
+		}
+		if req.TopP != nil {
+			normReq.TopP = req.TopP
+		}
 
-	httpReq.Header.Set("X-Request-ID", requestID)
+		httpReq, err := adapter.TranslateRequest(normReq, providerConn.BaseURL, decryptedKey)
+		if err != nil {
+			lastErr = "failed to translate request"
+			continue
+		}
 
-	reqStart := time.Now()
-	client := &http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Do(httpReq.WithContext(ctx))
-	latencyMs := int(time.Since(reqStart).Milliseconds())
+		httpReq.Header.Set("X-Request-ID", requestID)
 
-	if err != nil {
+		reqStart := time.Now()
+		client := &http.Client{Timeout: 60 * time.Second}
+		resp, err := client.Do(httpReq.WithContext(ctx))
+		latencyMs := int(time.Since(reqStart).Milliseconds())
+
+		if err != nil {
+			h.updateProviderLatency(context.Background(), providerConn.ID, latencyMs)
+			h.markProviderCooldown(ctx, providerConn.ID, "network error: "+err.Error())
+			lastErr = "upstream request failed"
+			continue
+		}
+
 		h.updateProviderLatency(context.Background(), providerConn.ID, latencyMs)
-		writeError(w, "upstream request failed", "upstream_error", "request_failed", http.StatusBadGateway)
-		return providerConn.Provider, targetModel.ModelID, http.StatusBadGateway
-	}
-	defer resp.Body.Close()
 
-	h.updateProviderLatency(context.Background(), providerConn.ID, latencyMs)
+		if resp.StatusCode >= 500 || resp.StatusCode == 429 {
+			bodyBytes, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			h.markProviderCooldown(ctx, providerConn.ID, fmt.Sprintf("HTTP %d", resp.StatusCode))
+			lastErr = fmt.Sprintf("provider returned %d", resp.StatusCode)
+			continue
+		}
 
-	if resp.StatusCode >= 400 {
-		bodyBytes, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode >= 400 {
+			bodyBytes, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(resp.StatusCode)
+			w.Write(bodyBytes)
+			return providerConn.Provider, targetModel.ModelID, resp.StatusCode
+		}
+
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(resp.StatusCode)
-		w.Write(bodyBytes)
-		return providerConn.Provider, targetModel.ModelID, resp.StatusCode
+		w.WriteHeader(http.StatusOK)
+		io.Copy(w, resp.Body)
+		resp.Body.Close()
+		return providerConn.Provider, targetModel.ModelID, http.StatusOK
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	io.Copy(w, resp.Body)
+	writeError(w, lastErr, "upstream_error", "request_failed", http.StatusBadGateway)
+	return "", targetModel.ModelID, http.StatusBadGateway
+}
 
-	return providerConn.Provider, targetModel.ModelID, http.StatusOK
+func (h *ChatHandler) markProviderCooldown(ctx context.Context, providerID string, errorMsg string) {
+	if h.DB == nil || providerID == "" {
+		return
+	}
+	backoffSec := int64(60)
+	until := time.Now().Add(time.Duration(backoffSec) * time.Second).Unix()
+	h.DB.Providers().MarkCooldown(ctx, providerID, until, errorMsg)
 }
 
 func (h *ChatHandler) recordUsage(ctx context.Context, req *ChatRequest, startTime time.Time, isStream bool, statusCode int, model, provider string, usage *Usage) {

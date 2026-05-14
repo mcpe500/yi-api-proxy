@@ -5,12 +5,12 @@ services:
     ports:
       - "8080:8080"
     environment:
-      - GOROUTER_DRIVER=json
+      - GOROUTER_DATABASE_DRIVER=json
       - GOROUTER_DATABASE_DSN=/data/gorouter.json
       - GOROUTER_JWT_SECRET=change-me-in-production
       - GOROUTER_LOG_LEVEL=info
       - GOROUTER_BOOTSTRAP_ADMIN_EMAIL=admin@gorouter.local
-      - GOROUTAP_ADMIN_PASSWORD=changeme123
+      - GOROUTER_BOOTSTRAP_ADMIN_PASSWORD=changeme123
     volumes:
       - ./data:/data
     restart: unless-stopped

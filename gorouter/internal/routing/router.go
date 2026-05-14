@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand"
 	"sort"
+	"time"
 
 	"github.com/gorouter/gorouter/internal/db"
 )
@@ -35,13 +36,14 @@ func (r *Router) SelectProvider(ctx context.Context, modelID string) (*db.Provid
 	}
 
 	var active []*db.ProviderConnection
+	now := time.Now()
 	for _, p := range providers {
-		if p.Status == "active" {
+		if p.Status == "active" && (p.CooldownUntil == nil || now.After(*p.CooldownUntil)) {
 			active = append(active, p)
 		}
 	}
 	if len(active) == 0 {
-		active = providers
+		return nil, fmt.Errorf("no active providers available (all cooldown or inactive)")
 	}
 
 	return r.selectByStrategy(active, modelID), nil
@@ -57,7 +59,6 @@ func (r *Router) SelectProviderForModel(ctx context.Context, modelID string) (*d
 	for _, m := range allModels {
 		if m.ModelID == modelID || m.ModelName == modelID || m.ID == modelID {
 			targetProviderIDs = append(targetProviderIDs, m.ProviderID)
-			break
 		}
 	}
 
@@ -85,13 +86,14 @@ func (r *Router) SelectProviderForModel(ctx context.Context, modelID string) (*d
 	}
 
 	var active []*db.ProviderConnection
+	now := time.Now()
 	for _, p := range candidates {
-		if p.Status == "active" {
+		if p.Status == "active" && (p.CooldownUntil == nil || now.After(*p.CooldownUntil)) {
 			active = append(active, p)
 		}
 	}
 	if len(active) == 0 {
-		active = candidates
+		return nil, fmt.Errorf("no active providers for model: %s (all cooldown or inactive)", modelID)
 	}
 
 	return r.selectByStrategy(active, modelID), nil
@@ -182,4 +184,81 @@ func (r *Router) byFallback(providers []*db.ProviderConnection) *db.ProviderConn
 		return providers[i].Priority > providers[j].Priority
 	})
 	return providers[0]
+}
+
+func (r *Router) SelectProvidersForModel(ctx context.Context, modelID string) ([]*db.ProviderConnection, error) {
+	allModels, err := r.db.Models().ListEnabled(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var targetProviderIDs []string
+	for _, m := range allModels {
+		if m.ModelID == modelID || m.ModelName == modelID || m.ID == modelID {
+			targetProviderIDs = append(targetProviderIDs, m.ProviderID)
+		}
+	}
+
+	if len(targetProviderIDs) == 0 {
+		return nil, fmt.Errorf("no providers found for model: %s", modelID)
+	}
+
+	allProviders, err := r.db.Providers().List(ctx)
+	if err != nil || len(allProviders) == 0 {
+		return nil, err
+	}
+
+	var candidates []*db.ProviderConnection
+	for _, p := range allProviders {
+		for _, id := range targetProviderIDs {
+			if p.ID == id {
+				candidates = append(candidates, p)
+				break
+			}
+		}
+	}
+
+	if len(candidates) == 0 {
+		return nil, fmt.Errorf("no providers for model: %s", modelID)
+	}
+
+	var active []*db.ProviderConnection
+	now := time.Now()
+	for _, p := range candidates {
+		if p.Status == "active" && (p.CooldownUntil == nil || now.After(*p.CooldownUntil)) {
+			active = append(active, p)
+		}
+	}
+	if len(active) == 0 {
+		return nil, fmt.Errorf("no active providers for model: %s", modelID)
+	}
+
+	switch r.strat {
+	case StrategyPriority, StrategyFallback:
+		sort.Slice(active, func(i, j int) bool {
+			return active[i].Priority > active[j].Priority
+		})
+	case StrategyWeighted:
+		// Weighted doesn't produce ordered list for fallback; use priority as fallback order
+		sort.Slice(active, func(i, j int) bool {
+			return active[i].Priority > active[j].Priority
+		})
+	case StrategyLatency:
+		sort.Slice(active, func(i, j int) bool {
+			return active[i].LastLatencyMs < active[j].LastLatencyMs
+		})
+	case StrategyCost:
+		models, _ := r.db.Models().ListEnabled(context.Background())
+		sort.Slice(active, func(i, j int) bool {
+			costI := r.getProviderCost(active[i], models, modelID)
+			costJ := r.getProviderCost(active[j], models, modelID)
+			return costI < costJ
+		})
+	default:
+		sort.Slice(active, func(i, j int) bool {
+			return active[i].Priority > active[j].Priority
+		})
+	}
+
+	return active, nil
 }
