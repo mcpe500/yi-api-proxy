@@ -39,7 +39,7 @@ type DatabaseManager interface {
 - Single file persistence: `gorouter.json`
 - In-memory map + file sync
 - Zero external dependencies
-- Quotas repo returns nil (stub)
+- Full repo implementations including Quotas, Settings, Aliases
 - Good for: testing, single-user
 
 ### SQLite Driver - IMPLEMENTED (`internal/db/sqlite.go`)
@@ -51,10 +51,12 @@ type DatabaseManager interface {
 - Full repository implementations for all 11 tables
 - Good for: self-host, small team, single-node
 
-### PostgreSQL Driver - STUB (`internal/db/dbmanager.go`)
-- All methods return nil
-- Not yet implemented
-- Planned: lib/pq driver, full ACID, concurrent access
+### PostgreSQL Driver - IMPLEMENTED (`internal/db/postgres.go`)
+- lib/pq driver, full ACID, concurrent access
+- All repositories implemented with parameterized queries
+- FK constraints with ON DELETE CASCADE
+- Migration wrapped in transaction
+- Good for: multi-user, HA, production
 
 ## Config
 
@@ -80,4 +82,5 @@ GOROUTER_DATABASE_DSN=postgres://user:pass@localhost/gorouter?sslmode=disable
 
 - JSON driver: `internal/db/dbmanager.go`
 - SQLite driver: `internal/db/sqlite.go`
+- PostgreSQL driver: `internal/db/postgres.go`
 - Types/interfaces: `internal/db/dbmanager.go`

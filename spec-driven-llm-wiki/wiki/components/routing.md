@@ -29,13 +29,13 @@ type ComboItem struct {
 
 ## Routing Strategies
 
-| Strategy | Description |
-|----------|-------------|
-| priority_fallback | Try in order, fallback if failed |
-| weighted_round_robin | Weight-based, sticky sessions |
-| least_cost | Sort by input_price + output_price |
-| quota_aware | Avoid models with low remaining quota |
-| latency_aware | Sort by p95 latency |
+| Strategy | Description | Status |
+|----------|-------------|--------|
+| priority | Highest priority first | IMPLEMENTED |
+| weighted | Random distribution based on weight | IMPLEMENTED |
+| cost | Least cost per 1k tokens | IMPLEMENTED |
+| latency | Lowest last request latency | IMPLEMENTED |
+| fallback | Priority-based retry chain | IMPLEMENTED |
 
 ## Fallback Eligibility
 

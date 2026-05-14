@@ -17,8 +17,8 @@ Gateway adalah OpenAI-compatible API endpoint utama yang melayani request dari u
 | `/v1/chat/completions` | POST | Chat completions (streaming + non-streaming) | IMPLEMENTED |
 | `/v1/models` | GET | Model list | IMPLEMENTED |
 | `/v1/embeddings` | POST | Embeddings | IMPLEMENTED |
-| `/v1/responses` | POST | OpenAI Responses API | NOT IMPLEMENTED |
-| `/v1/messages` | POST | Claude Messages API | NOT IMPLEMENTED |
+| `/v1/responses` | POST | OpenAI Responses API | IMPLEMENTED (Basic) |
+| `/v1/messages` | POST | Claude Messages API | IMPLEMENTED (Basic) |
 | `/health` | GET | Health check | IMPLEMENTED |
 | `/ready` | GET | Readiness check | IMPLEMENTED |
 

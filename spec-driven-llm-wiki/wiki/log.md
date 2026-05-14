@@ -162,3 +162,26 @@ All 12 blocking gaps from audit addressed:
 - Binary: 12.4MB optimized
 - go vet: clean
 - Routes: added /admin/aliases/*, /v1/responses, /v1/messages
+
+## [2026-05-14] audit | Remediation Pass (P0 + P1)
+
+Fixed critical regressions and runtime bugs identified in subagent fleet audit:
+- Fixed CORS allowCreds inverted logic (main.go)
+- Fixed production session secret stability (config.go)
+- Implemented missing JSON Quotas repository (dbmanager.go)
+- Fixed data loss in JSON RevokeAllForUser (dbmanager.go)
+- Fixed combo secret decryption (combo.go)
+- Fixed SSE buffer limits and choice indices (stream.go)
+- Synchronized DB schemas (strategy/created_by in SQLite, FKs in Postgres)
+- Added basic streaming implementation for compatibility endpoints (responses/messages)
+- Improved input validation (URLs, model pricing, retention days)
+- Expanded NormalizedChatRequest fields for better compatibility
+- Removed ~250 lines of dead code (main.go, auth.go)
+- Added unit tests for routing and rate limiter
+- Updated wiki documentation for all major component status changes
+
+### Key metrics:
+- Build: Success
+- Tests: basic coverage added
+- Dead code: -250 lines removed
+- Security: P0/P1 gaps closed

@@ -163,8 +163,8 @@ Specs 014, 016, 017: Dashboard API, metrics, Docker deployment
 - [x] [[spec:012-quota]] Quota + rate limit enforcement
 - [x] [[spec:013-usage]] Usage events + request logs + audit logs
 - [x] [[spec:014-dashboard-api]] All /api/* management endpoints
-- [x] [[spec:015-compat]] CommandCode + OpenCode Go + compat endpoints
-- [x] [[spec:016-metrics]] Health check + Prometheus metrics
+- [x] [[spec:015-compat]] /v1/responses + /v1/messages compat endpoints (basic non-stream + SSE wrapper)
+- [x] [[spec:016-metrics]] Health check + DB ping + provider health monitor
 - [x] [[spec:017-deploy]] Docker + deployment + migrations
 
 ## Quick Start
