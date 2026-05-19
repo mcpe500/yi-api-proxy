@@ -33,12 +33,14 @@ Gateway adalah OpenAI-compatible API endpoint utama yang melayani request dari u
 ```
 1. API key auth middleware (RequireAPIKey)
 2. Rate limiter middleware
-3. Resolve model (combo first, then direct model lookup, then implicit fallback)
-4. Get adapter from registry
-5. Translate request via adapter
-6. Execute upstream HTTP request
-7. Record usage event
-8. Stream/JSON response
+3. Inject Caveman prompt (if X-Caveman header present)
+4. Resolve model (combo first, then direct model lookup, then implicit fallback)
+5. Get adapter from registry
+6. Translate request via adapter
+7. Execute upstream HTTP request
+8. Apply RTK compression (if X-RTK header present)
+9. Record usage event
+10. Stream/JSON response
 ```
 
 ## Model Resolution Logic

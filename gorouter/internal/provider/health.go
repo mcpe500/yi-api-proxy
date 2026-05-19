@@ -99,9 +99,12 @@ func (h *HealthMonitor) checkProvider(p *db.ProviderConnection) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+	switch {
+	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
+		h.recordFailure(p.ID, fmt.Sprintf("auth failure: HTTP %d", resp.StatusCode))
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
 		h.recordSuccess(p.ID, latency)
-	} else {
+	default:
 		h.recordFailure(p.ID, fmt.Sprintf("HTTP %d", resp.StatusCode))
 	}
 }

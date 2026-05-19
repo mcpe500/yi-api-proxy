@@ -211,12 +211,13 @@ func (rl *RateLimiter) cleanupLoop() {
 		rl.mu.Unlock()
 
 		rl.wmu.Lock()
-		cutoff := time.Now().Add(-24 * time.Hour).Unix()
+		cleanupNow := time.Now().Unix()
+		cutoff := cleanupNow - 86400
 		for userID, w := range rl.window {
 			w.mu.Lock()
 			w.minute = filterTimestamps(w.minute, cutoff)
 			w.daily = filterTimestamps(w.daily, cutoff)
-			w.cleanTokens(cutoff)
+			w.cleanTokens(cleanupNow)
 			if len(w.minute) == 0 && len(w.daily) == 0 && len(w.tokens) == 0 {
 				delete(rl.window, userID)
 			}

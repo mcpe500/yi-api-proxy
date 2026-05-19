@@ -252,9 +252,14 @@ func main() {
 
 	tokenRefresher := auth.NewTokenRefresher(dbManager)
 
-	chatHandler := v1.NewChatHandler(dbManager, comboManager, log, router, tokenRefresher)
-	responsesHandler := v1.NewResponsesHandler(dbManager, comboManager, log)
-	messagesHandler := v1.NewMessagesHandler(dbManager, comboManager, log)
+	tokenOptimizer := v1.NewTokenOptimizer(v1.TokenOptimizerConfig{
+		RTKEnabled:   cfg.RTKEnabled,
+		CavemanLevel: cfg.CavemanLevel,
+	}, log)
+
+	chatHandler := v1.NewChatHandler(dbManager, comboManager, log, router, tokenRefresher, tokenOptimizer)
+	responsesHandler := v1.NewResponsesHandler(dbManager, comboManager, log, tokenOptimizer)
+	messagesHandler := v1.NewMessagesHandler(dbManager, comboManager, log, tokenOptimizer)
 	modelsHandler := v1.NewModelsHandler(dbManager)
 	embeddingsHandler := v1.NewEmbeddingHandler(dbManager, "")
 	imagesHandler := v1.NewImagesHandler(dbManager, log)

@@ -27,6 +27,8 @@ type AppConfig struct {
 	IsProduction            bool
 	RoutingStrategy         string
 	AllowedOrigins          []string
+	RTKEnabled              bool
+	CavemanLevel            string
 }
 
 func Load() *AppConfig {
@@ -48,6 +50,8 @@ func Load() *AppConfig {
 	cfg.EnableRequestBodyLog = getEnvBool("GOROUTER_ENABLE_REQUEST_BODY_LOG", false)
 	cfg.RoutingStrategy = getEnv("GOROUTER_ROUTING_STRATEGY", "priority")
 	cfg.IsProduction = getEnv("APP_ENV", "development") == "production"
+	cfg.RTKEnabled = getEnvBool("GOROUTER_RTK_ENABLED", false)
+	cfg.CavemanLevel = getEnv("GOROUTER_CAVEMAN_LEVEL", "")
 
 	origins := getEnv("GOROUTER_ALLOWED_ORIGINS", "*")
 	if origins == "*" {

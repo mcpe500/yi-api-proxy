@@ -64,15 +64,17 @@ type ChatHandler struct {
 	Logger    *slog.Logger
 	Router    *routing.Router
 	Refresher *auth.TokenRefresher
+	Optimizer *TokenOptimizer
 }
 
-func NewChatHandler(db db.DatabaseManager, cm *combo.ComboManager, log *slog.Logger, router *routing.Router, refresher *auth.TokenRefresher) *ChatHandler {
+func NewChatHandler(db db.DatabaseManager, cm *combo.ComboManager, log *slog.Logger, router *routing.Router, refresher *auth.TokenRefresher, opt *TokenOptimizer) *ChatHandler {
 	return &ChatHandler{
 		DB:        db,
 		Combos:    cm,
 		Logger:    log,
 		Router:    router,
 		Refresher: refresher,
+		Optimizer: opt,
 	}
 }
 
@@ -96,6 +98,10 @@ func (h *ChatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if req.Messages == nil || len(req.Messages) == 0 {
 		writeError(w, "messages is required", "invalid_request_error", "invalid_request", http.StatusBadRequest)
 		return
+	}
+
+	if h.Optimizer != nil {
+		req.Messages, _ = h.Optimizer.ApplyToChatMessages(r, req.Messages)
 	}
 
 	ctx := r.Context()
@@ -133,6 +139,7 @@ func (h *ChatHandler) handleStreaming(ctx context.Context, w http.ResponseWriter
 	finalModel := req.Model
 	providerName := ""
 	statusCode := 200
+	var usage *Usage
 
 	comboResult, comboErr := h.tryComboExecution(ctx, req)
 	if comboErr == nil && comboResult != nil && comboResult.Success {
@@ -154,15 +161,28 @@ func (h *ChatHandler) handleStreaming(ctx context.Context, w http.ResponseWriter
 		if combo, ok := comboResult.Response["provider"].(string); ok {
 			providerName = combo
 		}
+		usage = extractUsage(comboResult.Response)
 	} else {
-		providerName, finalModel, statusCode = h.executeDirectRequest(ctx, w, req, requestID)
+		var capturedBody []byte
+		providerName, finalModel, statusCode, capturedBody = h.executeDirectRequest(ctx, w, req, requestID)
+		if statusCode == 200 && capturedBody != nil {
+			var data map[string]any
+			if err := json.Unmarshal(capturedBody, &data); err == nil {
+				usage = extractUsage(data)
+			}
+		}
 	}
 
-	h.recordUsage(ctx, req, startTime, true, statusCode, finalModel, providerName, nil)
+	h.recordUsage(ctx, req, startTime, true, statusCode, finalModel, providerName, usage)
 }
 
 func (h *ChatHandler) handleNonStreaming(ctx context.Context, w http.ResponseWriter, req *ChatRequest, requestID string, startTime time.Time) {
 	ctx = context.WithValue(ctx, "request_id", requestID)
+
+	finalModel := req.Model
+	providerName := ""
+	statusCode := 200
+	var usage *Usage
 
 	comboResult, err := h.tryComboExecution(ctx, req)
 	if err == nil && comboResult != nil && comboResult.Success {
@@ -173,8 +193,14 @@ func (h *ChatHandler) handleNonStreaming(ctx context.Context, w http.ResponseWri
 		return
 	}
 
-	providerName, finalModel, statusCode := h.executeDirectRequest(ctx, w, req, requestID)
-	h.recordUsage(ctx, req, startTime, false, statusCode, finalModel, providerName, nil)
+	providerName, finalModel, statusCode, capturedBody := h.executeDirectRequest(ctx, w, req, requestID)
+	if statusCode == 200 && capturedBody != nil {
+		var data map[string]any
+		if err := json.Unmarshal(capturedBody, &data); err == nil {
+			usage = extractUsage(data)
+		}
+	}
+	h.recordUsage(ctx, req, startTime, false, statusCode, finalModel, providerName, usage)
 }
 
 func (h *ChatHandler) tryComboExecution(ctx context.Context, req *ChatRequest) (*combo.ExecuteResponse, error) {
@@ -201,13 +227,14 @@ func (h *ChatHandler) tryComboExecution(ctx context.Context, req *ChatRequest) (
 	return nil, nil
 }
 
-func (h *ChatHandler) executeDirectRequest(ctx context.Context, w http.ResponseWriter, req *ChatRequest, requestID string) (provider, model string, statusCode int) {
+func (h *ChatHandler) executeDirectRequest(ctx context.Context, w http.ResponseWriter, req *ChatRequest, requestID string) (provider, model string, statusCode int, capturedBody []byte) {
 	statusCode = 200
+	capturedBody = make([]byte, 0)
 
 	models, err := h.DB.Models().ListEnabled(ctx)
 	if err != nil {
 		writeError(w, "failed to load models", "upstream_error", "provider_error", http.StatusServiceUnavailable)
-		return "", req.Model, http.StatusServiceUnavailable
+		return "", req.Model, http.StatusServiceUnavailable, nil
 	}
 
 	var targetModel *db.Model
@@ -220,7 +247,7 @@ func (h *ChatHandler) executeDirectRequest(ctx context.Context, w http.ResponseW
 
 	if targetModel == nil {
 		writeError(w, "model not found: "+req.Model, "invalid_request_error", "model_not_found", http.StatusBadRequest)
-		return "", req.Model, http.StatusBadRequest
+		return "", req.Model, http.StatusBadRequest, nil
 	}
 
 	var candidates []*db.ProviderConnection
@@ -234,8 +261,8 @@ func (h *ChatHandler) executeDirectRequest(ctx context.Context, w http.ResponseW
 	if len(candidates) == 0 {
 		providerConn, err := h.DB.Providers().FindByID(ctx, targetModel.ProviderID)
 		if err != nil || providerConn == nil {
-			writeError(w, "provider not found", "upstream_error", "provider_not_found", http.StatusServiceUnavailable)
-			return "", targetModel.ModelID, http.StatusServiceUnavailable
+		writeError(w, "provider not found", "upstream_error", "provider_not_found", http.StatusServiceUnavailable)
+		return "", targetModel.ModelID, http.StatusServiceUnavailable, nil
 		}
 		candidates = []*db.ProviderConnection{providerConn}
 	}
@@ -315,7 +342,7 @@ func (h *ChatHandler) executeDirectRequest(ctx context.Context, w http.ResponseW
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(resp.StatusCode)
 			w.Write(bodyBytes)
-			return providerConn.Provider, targetModel.ModelID, resp.StatusCode
+			return providerConn.Provider, targetModel.ModelID, resp.StatusCode, nil
 		}
 
 		if req.Stream {
@@ -325,17 +352,18 @@ func (h *ChatHandler) executeDirectRequest(ctx context.Context, w http.ResponseW
 				writeSSEError(w, err.Error())
 			}
 			resp.Body.Close()
-			return providerConn.Provider, targetModel.ModelID, http.StatusOK
+			return providerConn.Provider, targetModel.ModelID, http.StatusOK, nil
 		}
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		io.Copy(w, resp.Body)
-		resp.Body.Close()
-		return providerConn.Provider, targetModel.ModelID, http.StatusOK
+		w.Write(bodyBytes)
+		return providerConn.Provider, targetModel.ModelID, http.StatusOK, bodyBytes
 	}
 
 	writeError(w, lastErr, "upstream_error", "request_failed", http.StatusBadGateway)
-	return "", targetModel.ModelID, http.StatusBadGateway
+	return "", targetModel.ModelID, http.StatusBadGateway, nil
 }
 
 func (h *ChatHandler) markProviderCooldown(ctx context.Context, providerID string, errorMsg string) {

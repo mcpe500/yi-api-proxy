@@ -21,13 +21,14 @@ import (
 )
 
 type ResponsesHandler struct {
-	DB     db.DatabaseManager
-	Combos *combo.ComboManager
-	Logger *slog.Logger
+	DB        db.DatabaseManager
+	Combos    *combo.ComboManager
+	Logger    *slog.Logger
+	Optimizer *TokenOptimizer
 }
 
-func NewResponsesHandler(db db.DatabaseManager, cm *combo.ComboManager, log *slog.Logger) *ResponsesHandler {
-	return &ResponsesHandler{DB: db, Combos: cm, Logger: log}
+func NewResponsesHandler(db db.DatabaseManager, cm *combo.ComboManager, log *slog.Logger, opt *TokenOptimizer) *ResponsesHandler {
+	return &ResponsesHandler{DB: db, Combos: cm, Logger: log, Optimizer: opt}
 }
 
 type ResponsesRequest struct {
@@ -286,6 +287,10 @@ func (h *ResponsesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil || len(messages) == 0 {
 		writeResponsesError(w, "invalid input format", "invalid_request_error", "invalid_request", http.StatusBadRequest)
 		return
+	}
+
+	if h.Optimizer != nil {
+		messages, _ = h.Optimizer.ApplyToMessages(r, messages)
 	}
 
 	if req.Stream {

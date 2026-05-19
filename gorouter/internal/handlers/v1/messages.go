@@ -20,13 +20,14 @@ import (
 )
 
 type MessagesHandler struct {
-	DB     db.DatabaseManager
-	Combos *combo.ComboManager
-	Logger *slog.Logger
+	DB        db.DatabaseManager
+	Combos    *combo.ComboManager
+	Logger    *slog.Logger
+	Optimizer *TokenOptimizer
 }
 
-func NewMessagesHandler(db db.DatabaseManager, cm *combo.ComboManager, log *slog.Logger) *MessagesHandler {
-	return &MessagesHandler{DB: db, Combos: cm, Logger: log}
+func NewMessagesHandler(db db.DatabaseManager, cm *combo.ComboManager, log *slog.Logger, opt *TokenOptimizer) *MessagesHandler {
+	return &MessagesHandler{DB: db, Combos: cm, Logger: log, Optimizer: opt}
 }
 
 type MessagesRequest struct {
@@ -103,6 +104,10 @@ func (h *MessagesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if len(req.Messages) == 0 {
 		writeError(w, "messages is required", "invalid_request_error", "invalid_request", http.StatusBadRequest)
 		return
+	}
+
+	if h.Optimizer != nil {
+		req.Messages, req.System, _ = h.Optimizer.ApplyToClaudeMessages(r, req.Messages, req.System)
 	}
 
 	ctx := r.Context()

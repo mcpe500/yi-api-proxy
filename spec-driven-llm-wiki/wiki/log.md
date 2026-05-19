@@ -233,3 +233,25 @@ Updated documentation for 9router parity architectural improvements:
 - gateway.md: Added implicit fallback by model_id support.
 - routing.md: Documented automatic fallback logic for model_id requests.
 - New guide: guides/9router-parity.md created.
+
+## [2026-05-19] implement | RTK & Caveman Token Optimization
+
+Implemented token reduction features for tool outputs and model communication:
+
+### RTK (Rust Token Killer)
+- internal/rtk package for output compression
+- Filters: gitdiff, ls, grep, build
+- Auto-detection logic for tool outputs
+- Integrated into gateway handlers for response filtering
+- X-RTK header support
+
+### Caveman Mode
+- internal/caveman package for prompt injection
+- Modes: lite, full, ultra
+- Integrated into v1 chat, messages, and responses handlers
+- X-Caveman header support
+
+### Bug Fixes & Refinement
+- Rate limiting unit mismatch (seconds vs milliseconds)
+- Health check 401/403 handling (unauthenticated health check allowed)
+- Usage tracking in all paths (streaming/non-streaming, direct/combo)
