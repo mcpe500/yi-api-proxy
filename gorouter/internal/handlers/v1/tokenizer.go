@@ -11,8 +11,9 @@ import (
 )
 
 type TokenOptimizerConfig struct {
-	RTKEnabled     bool
-	CavemanLevel   string
+	RTKEnabled       bool
+	RTKDefaultFilter string
+	CavemanLevel     string
 }
 
 type TokenOptimizer struct {
@@ -31,11 +32,28 @@ func (to *TokenOptimizer) ShouldCompress(r *http.Request) bool {
 	return to.config.RTKEnabled
 }
 
+func (to *TokenOptimizer) RTKFilter(r *http.Request) string {
+	if filter := r.Header.Get("X-RTK-Filter"); filter != "" {
+		return strings.ToLower(filter)
+	}
+	if to.config.RTKDefaultFilter != "" {
+		return strings.ToLower(to.config.RTKDefaultFilter)
+	}
+	return "autodetect"
+}
+
 func (to *TokenOptimizer) CavemanLevel(r *http.Request) string {
 	if level := r.Header.Get("X-Caveman"); level != "" {
-		return level
+		return strings.ToLower(level)
 	}
-	return to.config.CavemanLevel
+	return strings.ToLower(to.config.CavemanLevel)
+}
+
+func (to *TokenOptimizer) compressContent(r *http.Request, content string) (string, int) {
+	if to.RTKFilter(r) == "autodetect" {
+		return rtk.Compress(content)
+	}
+	return rtk.CompressWithFilter(content, to.RTKFilter(r))
 }
 
 func (to *TokenOptimizer) ApplyToMessages(r *http.Request, messages []translator.NormalizedMessage) ([]translator.NormalizedMessage, int) {
@@ -50,7 +68,7 @@ func (to *TokenOptimizer) ApplyToMessages(r *http.Request, messages []translator
 	for i, m := range messages {
 		content := m.Content
 		if shouldCompress {
-			compressed, saved := rtk.Compress(content)
+			compressed, saved := to.compressContent(r, content)
 			totalSaved += saved
 			content = compressed
 		}
@@ -83,7 +101,7 @@ func (to *TokenOptimizer) ApplyToChatMessages(r *http.Request, msgs []ChatMessag
 	for i, m := range msgs {
 		content := m.Content
 		if shouldCompress {
-			compressed, saved := rtk.Compress(content)
+			compressed, saved := to.compressContent(r, content)
 			totalSaved += saved
 			content = compressed
 		}
@@ -91,13 +109,8 @@ func (to *TokenOptimizer) ApplyToChatMessages(r *http.Request, msgs []ChatMessag
 	}
 
 	if level != "" {
-		normMsgs := make([]translator.NormalizedMessage, len(msgs))
-		for i, m := range msgs {
-			normMsgs[i] = translator.NormalizedMessage{Role: m.Role, Content: m.Content}
-		}
-		normMsgs = caveman.Inject(normMsgs, level)
-		for i, m := range normMsgs {
-			msgs[i].Content = m.Content
+		if prompt := caveman.GetPrompt(level); prompt != "" {
+			msgs = append([]ChatMessage{{Role: "system", Content: prompt}}, msgs...)
 		}
 	}
 
@@ -124,7 +137,7 @@ func (to *TokenOptimizer) ApplyToClaudeMessages(r *http.Request, msgs []ClaudeMe
 		if s, ok := m.Content.(string); ok {
 			content := s
 			if shouldCompress {
-				compressed, saved := rtk.Compress(content)
+				compressed, saved := to.compressContent(r, content)
 				totalSaved += saved
 				content = compressed
 			}
@@ -136,7 +149,7 @@ func (to *TokenOptimizer) ApplyToClaudeMessages(r *http.Request, msgs []ClaudeMe
 		if s, ok := system.(string); ok {
 			content := s
 			if shouldCompress {
-				compressed, saved := rtk.Compress(content)
+				compressed, saved := to.compressContent(r, content)
 				totalSaved += saved
 				content = compressed
 			}
@@ -145,18 +158,20 @@ func (to *TokenOptimizer) ApplyToClaudeMessages(r *http.Request, msgs []ClaudeMe
 	}
 
 	if level != "" {
-		normMsgs := make([]translator.NormalizedMessage, len(msgs))
-		for i, m := range msgs {
-			content := ""
-			if s, ok := m.Content.(string); ok {
-				content = s
+		if prompt := caveman.GetPrompt(level); prompt != "" {
+			if s, ok := system.(string); ok && s != "" {
+				system = prompt + "\n\n" + s
+			} else if system == nil {
+				system = prompt
 			}
-			normMsgs[i] = translator.NormalizedMessage{Role: m.Role, Content: content}
 		}
-		normMsgs = caveman.Inject(normMsgs, level)
-		// Caveman inject might add system prompt, or modify existing messages
-		// Here we only map back if it didn't change structure too much for simplicity
-		// or if it did, we'd need more complex mapping
+	}
+
+	if totalSaved > 0 && to.logger != nil {
+		to.logger.Info("token optimization applied",
+			"savings_bytes", totalSaved,
+			"messages", len(msgs),
+		)
 	}
 
 	return msgs, system, totalSaved

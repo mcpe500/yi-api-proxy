@@ -1,153 +1,83 @@
 ---
 title: "RTK - Rust Token Killer"
 type: component
-tags: [rtk, compression, token-optimization, output-filter]
+tags: [rtk, compression, token-optimization, input-filter]
 ---
 
 # Component: RTK (Rust Token Killer)
 
 ## Overview
 
-RTK adalah package untuk mengompres output tool (git diff, ls, grep, build output) sebelum dikirim ke LLM. Menggunakan filter-pattern spesifik untuk setiap jenis output, mengurangi token usage 60-90%.
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                    Gateway Handler                       │
-│  POST /v1/chat/completions, /v1/responses, /v1/messages  │
-└───────────────────────┬─────────────────────────────────┘
-                        │
-┌───────────────────────▼─────────────────────────────────┐
-│              Upstream Provider Response                   │
-│                    (raw output)                          │
-└───────────────────────┬─────────────────────────────────┘
-                        │
-┌───────────────────────▼─────────────────────────────────┐
-│                    RTK Filter                             │
-│           (applied based on X-RTK header)                 │
-└───────────────────────┬─────────────────────────────────┘
-                        │
-┌───────────────────────▼─────────────────────────────────┐
-│              Compressed Response                          │
-│               (sent to client)                           │
-└─────────────────────────────────────────────────────────┘
-```
+RTK mengompres **input/tool output** sebelum request diteruskan ke upstream LLM. Target utama: output panjang dari tool coding (`git diff`, `rg`, `go test`, `docker logs`, `curl`, dll) agar token prompt lebih kecil.
 
 ## Activation
 
-### Via Header
-
-```
+```http
 X-RTK: true
-X-RTK-Filter: gitdiff|ls|grep|build|autodetect
+X-RTK-Filter: autodetect|gitdiff|ls|grep|build|test|gitops|github|pkgmgr|infra|network|err|log|json|summary
 ```
 
-### Via Config
+Global config:
 
 ```bash
 GOROUTER_RTK_ENABLED=true
 GOROUTER_RTK_DEFAULT_FILTER=autodetect
 ```
 
+## Pipeline
+
+```text
+client request
+  -> TokenOptimizer
+  -> RTK compress message content
+  -> Caveman inject (optional)
+  -> provider routing/fallback
+  -> upstream provider
+```
+
 ## Filters
 
-### GitDiff Filter
+| Filter | Target | Behavior |
+|---|---|---|
+| `gitdiff` | `git diff`, `git show` | strip headers/noise, preserve changed lines |
+| `ls` | `ls`, `dir` | compact permissions/date/listing noise |
+| `grep` | `grep`, `rg` | preserve file/line hits, remove repeated context |
+| `build` | `go build`, `npm build`, `cargo build`, `tsc` | keep warnings/errors/summary, drop progress |
+| `test` | vitest, playwright, cargo/go tests | drop passing noise, keep failures/summaries |
+| `gitops` | `git status`, `git log`, branch/push/pull | compact VCS status/log output |
+| `github` | `gh pr`, `gh run`, `gh issue` | compact GitHub CLI rows/status |
+| `pkgmgr` | `npm`, `pnpm`, `npx` | strip install/progress noise |
+| `infra` | `docker`, `kubectl` | compact ps/get/log style output |
+| `network` | `curl`, `wget` | remove transfer/progress meters |
+| `err` | logs/errors | keep error-like lines |
+| `log` | logs | deduplicate noisy log lines |
+| `json` | JSON blobs | compact structural JSON |
+| `summary` | generic long text | summarize repeated lines/noise |
+| `autodetect` | default | choose best filter by markers |
 
-Target: `git diff`, `git show`, `git log -p`
+## Implementation
 
-Transforms:
-- Remove binary file indicators (minus content)
-- Collapse context lines (`@@` sections)
-- Show only file paths + changes summary
-- Remove redundant `index` lines
-
-Input:
-```
-diff --git a/src/main.go b/src/main.go
-index 1234567..abcdefg 100644
---- a/src/main.go
-+++ b/src/main.go
-@@ -10,7 +10,8 @@ func main() {
--    fmt.Println("old")
-+    fmt.Println("new")
-+    fmt.Println("added line")
- }
-```
-
-Output:
-```
-src/main.go: -old +new +added line
-```
-
-### Ls Filter
-
-Target: `ls -la`, directory listings
-
-Transforms:
-- Compact format: `drwxr-xr-x dir/`
-- Remove timestamps for brevity
-- Show file count summary
-- Group by type
-
-### Grep Filter
-
-Target: `grep -rn`, ripgrep, `rg`
-
-Transforms:
-- Remove match context (filename:line: only)
-- Collapse consecutive matches in same file
-- Show match count per file
-- Remove verbose headers
-
-### Build Filter
-
-Target: `cargo build`, `npm run build`, `tsc`, `go build`, `vite build`
-
-Transforms:
-- Show only status line (Compiling... Done)
-- Summary: files changed, warnings, errors
-- Collapsed compiler output
-- Error lines preserved
-
-## Auto-Detection
-
-Jika filter tidak ditentukan, RTK mendeteksi format secara otomatis:
-
-| Marker | Detected Type |
-|--------|---------------|
-| `diff `, `index `, `--- `, `+++ `, `@@` | gitdiff |
-| `Compiling`, `Finished`, `cargo build` | build |
-| `file:line:content` pattern | grep |
-| `drwxr-xr-x` permission strings | ls |
-
-## Integration
-
-### v1 Handlers
-
-RTK diintegrasikan pada response pipeline:
-
-- `ChatHandler` - Compress streaming/non-streaming responses
-- `ResponsesHandler` - Apply to response output
-- `MessagesHandler` - Apply to Claude message output
-
-### Compress Function
+Main package: `gorouter/internal/rtk/`
 
 ```go
-import "github.com/gorouter/gorouter/internal/rtk"
-
 compressed, saved := rtk.Compress(content)
 compressed, saved := rtk.CompressWithFilter(content, "gitdiff")
-```
-
-### Available Filters
-
-```go
 filters := rtk.GetAvailableFilters()
-// ["gitdiff", "ls", "grep", "build", "autodetect"]
 ```
 
-## Related Specs
+Integrated through `gorouter/internal/handlers/v1/tokenizer.go` into:
 
-- [[spec:010-gateway]] - Gateway implementation
-- [[spec:007-translator]] - Request/response translation
+- `POST /v1/chat/completions`
+- `POST /v1/responses`
+- `POST /v1/messages`
+
+## Caveats
+
+- RTK is lossy by design; use only for tool/log output, not user text needing exact preservation.
+- Streaming response chunks are not retro-compressed; optimization happens before upstream request.
+
+## Related
+
+- [[components:caveman]]
+- [[components:gateway]]
+- [[components:routing]]

@@ -46,6 +46,13 @@ type slidingWindow struct {
 }
 
 func NewRateLimiter(cfg *RateLimitConfig) *RateLimiter {
+	if cfg == nil {
+		cfg = &RateLimitConfig{}
+	}
+	if cfg.CacheTTL <= 0 {
+		cfg.CacheTTL = 5 * time.Minute
+	}
+
 	rl := &RateLimiter{
 		cfg:    cfg,
 		cache:  make(map[string]*cachedLimit),
@@ -148,7 +155,11 @@ func (rl *RateLimiter) getLimit(userID string) *db.RateLimit {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	limit, err := rl.cfg.DB.RateLimits().FindByUserID(ctx, userID)
+	var limit *db.RateLimit
+	var err error
+	if rl.cfg.DB != nil {
+		limit, err = rl.cfg.DB.RateLimits().FindByUserID(ctx, userID)
+	}
 	if err != nil || limit == nil {
 		defaultLimit := &db.RateLimit{
 			UserID:            userID,

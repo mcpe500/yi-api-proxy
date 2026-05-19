@@ -36,6 +36,19 @@ type ComboItem struct {
 | cost | Least cost per 1k tokens | IMPLEMENTED |
 | latency | Lowest last request latency | IMPLEMENTED |
 | fallback | Priority-based retry chain | IMPLEMENTED |
+| tier | Subscription → Cheap → Free routing | IMPLEMENTED |
+
+## 3-Tier Routing
+
+ProviderConnection memiliki `tier`:
+
+| Tier | Meaning | Priority |
+|---|---|---|
+| `subscription` | paid subscription/provider account | 1st |
+| `cheap` | low-cost API provider | 2nd |
+| `free` | free quota/account/provider | 3rd |
+
+`GOROUTER_ROUTING_STRATEGY=tier` mengurutkan kandidat provider berdasarkan tier, lalu tetap memakai fallback/cooldown jika provider gagal.
 
 ## Implicit Model Fallback
 

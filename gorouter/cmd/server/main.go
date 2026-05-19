@@ -254,8 +254,9 @@ func main() {
 	tokenRefresher := auth.NewTokenRefresher(dbManager)
 
 	tokenOptimizer := v1.NewTokenOptimizer(v1.TokenOptimizerConfig{
-		RTKEnabled:   cfg.RTKEnabled,
-		CavemanLevel: cfg.CavemanLevel,
+		RTKEnabled:       cfg.RTKEnabled,
+		RTKDefaultFilter: cfg.RTKDefaultFilter,
+		CavemanLevel:     cfg.CavemanLevel,
 	}, log)
 
 	chatHandler := v1.NewChatHandler(dbManager, comboManager, log, router, tokenRefresher, tokenOptimizer)

@@ -255,3 +255,20 @@ Implemented token reduction features for tool outputs and model communication:
 - Rate limiting unit mismatch (seconds vs milliseconds)
 - Health check 401/403 handling (unauthenticated health check allowed)
 - Usage tracking in all paths (streaming/non-streaming, direct/combo)
+
+## [2026-05-19] parity | RTK/Sync Documentation and Optimizer Fix
+
+Follow-up after 9router parity implementation:
+
+- Fixed `TokenOptimizer.ApplyToChatMessages` caveman injection so it prepends a system message safely instead of writing past the original slice length.
+- Fixed Claude Messages caveman integration to populate/extend the Anthropic `system` field.
+- Added `X-RTK-Filter` and `GOROUTER_RTK_DEFAULT_FILTER` support to choose explicit RTK filters.
+- Added tokenizer unit tests for chat caveman, Claude system injection, and explicit RTK network filter.
+- Created `wiki/components/sync.md` for Online Sync Worker docs.
+- Updated `wiki/components/rtk.md` and `wiki/guides/9router-parity.md` to document all current filters and clarify RTK runs on input/tool output before upstream requests.
+- Updated `wiki/components/routing.md` with `tier` strategy details.
+
+Validation:
+- Build: Success
+- Vet: No issues
+- Tests: pass

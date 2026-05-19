@@ -20,6 +20,17 @@ func (f *NetworkFilter) Process(content string) (string, int) {
 	timePattern := regexp.MustCompile(`\d+ms|\d+\.\d+s`)
 
 	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "% Total") || strings.HasPrefix(trimmed, "100 ") || strings.HasPrefix(trimmed, "0 ") {
+			continue
+		}
+		if strings.Contains(trimmed, "--:--:--") || strings.Contains(trimmed, "ETA") {
+			continue
+		}
+
 		line = progressPattern.ReplaceAllString(line, "")
 		line = sizePattern.ReplaceAllString(line, "SIZE")
 		line = speedPattern.ReplaceAllString(line, "SPEED")

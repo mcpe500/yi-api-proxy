@@ -28,6 +28,7 @@ type AppConfig struct {
 	RoutingStrategy         string
 	AllowedOrigins          []string
 	RTKEnabled              bool
+	RTKDefaultFilter        string
 	CavemanLevel            string
 	OnlineSyncURL           string
 	OnlineSyncToken         string
@@ -55,6 +56,7 @@ func Load() *AppConfig {
 	cfg.RoutingStrategy = getEnv("GOROUTER_ROUTING_STRATEGY", "priority")
 	cfg.IsProduction = getEnv("APP_ENV", "development") == "production"
 	cfg.RTKEnabled = getEnvBool("GOROUTER_RTK_ENABLED", false)
+	cfg.RTKDefaultFilter = getEnv("GOROUTER_RTK_DEFAULT_FILTER", "autodetect")
 	cfg.CavemanLevel = getEnv("GOROUTER_CAVEMAN_LEVEL", "")
 
 	origins := getEnv("GOROUTER_ALLOWED_ORIGINS", "*")

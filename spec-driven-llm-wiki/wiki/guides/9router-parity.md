@@ -35,13 +35,20 @@ RTK (Rust Token Killer) mengompres output tool (git diff, ls, grep, build) sebel
 
 ### Available Filters
 
-| Filter | Target Output | Typical Savings |
-|--------|--------------|-----------------|
-| `gitdiff` | `git diff`, `git show` | 80% |
-| `ls` | `ls -la`, directory listings | 60-75% |
-| `grep` | `grep -rn`, ripgrep output | 75% |
-| `build` | `cargo build`, `npm run build`, `tsc` | 70-87% |
-| `autodetect` | Auto-detect dari content markers | Varies |
+| Filter | Target Output |
+|--------|--------------|
+| `gitdiff` | `git diff`, `git show` |
+| `ls` | `ls -la`, directory listings |
+| `grep` | `grep -rn`, ripgrep output |
+| `build` | `cargo build`, `npm run build`, `tsc`, `go build` |
+| `test` | vitest, playwright, cargo/go tests |
+| `gitops` | `git status`, `git log`, branch/push/pull |
+| `github` | `gh pr`, `gh run`, `gh issue` |
+| `pkgmgr` | `npm`, `pnpm`, `npx` |
+| `infra` | `docker`, `kubectl` |
+| `network` | `curl`, `wget` |
+| `err` / `log` / `json` / `summary` | generic analysis filters |
+| `autodetect` | Auto-detect dari content markers |
 
 ### Auto-Detection
 
@@ -53,7 +60,7 @@ Jika `X-RTK-Filter` tidak ditentukan, RTK mendeteksi format output secara otomat
 
 ### Integration Point
 
-RTK berjalan di response pipeline gateway, setelah upstream response diterima dan sebelum dikirim ke client. Filter diterapkan pada non-streaming responses. Untuk streaming, filter diterapkan per-chunk jika memungkinkan.
+RTK berjalan di input pipeline gateway, sebelum request dikirim ke provider upstream. Ini mengompres tool output yang ada di message content.
 
 ## Token Optimization: Caveman Mode
 
@@ -78,6 +85,27 @@ Caveman injector menambahkan system message di awal message array. Prompt berisi
 
 ### Supported Endpoints
 
-- `POST /v1/chat/completions` - System message injection
-- `POST /v1/responses` - Prompt prepended to input
-- `POST /v1/messages` - System field modification
+- `POST /v1/chat/completions` - System message prepended
+- `POST /v1/responses` - System message/input prepended
+- `POST /v1/messages` - Anthropic `system` field modified
+
+## Online Mode
+
+Gorouter sekarang punya fondasi online-ready melalui [[components:sync]]:
+
+```bash
+GOROUTER_ONLINE_SYNC_URL=https://example.com/sync
+GOROUTER_ONLINE_SYNC_TOKEN=secret
+```
+
+Worker melakukan push snapshot providers/models/combos tiap 5 menit. Ini menutup gap awal "Go masih offline", namun belum sama dengan hosted 9router cloud penuh karena belum ada bidirectional sync dan cloud dashboard service.
+
+## 3-Tier Fallback
+
+Provider punya `tier`:
+
+1. `subscription` — prioritas utama jika tersedia.
+2. `cheap` — fallback biaya rendah.
+3. `free` — fallback terakhir/gratis.
+
+Routing strategy `tier` memprioritaskan Subscription → Cheap → Free untuk mendekati pola fallback 9router.
