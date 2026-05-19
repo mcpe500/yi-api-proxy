@@ -55,6 +55,7 @@ type ProviderResponse struct {
 	BaseURL  string      `json:"base_url,omitempty"`
 	Priority int         `json:"priority"`
 	Weight   int         `json:"weight"`
+	Tier     string      `json:"tier"`
 	Status   string      `json:"status"`
 	Models   []*db.Model `json:"models,omitempty"`
 }
@@ -68,6 +69,7 @@ func providerToResponse(conn *db.ProviderConnection, models []*db.Model) *Provid
 		BaseURL:  conn.BaseURL,
 		Priority: conn.Priority,
 		Weight:   conn.Weight,
+		Tier:     conn.Tier,
 		Status:   conn.Status,
 		Models:   models,
 	}
@@ -145,6 +147,7 @@ type CreateProviderRequest struct {
 	BaseURL  string             `json:"base_url,omitempty"`
 	Priority int                `json:"priority"`
 	Weight   int                `json:"weight"`
+	Tier     string             `json:"tier"`
 	Models   []CreateModelInput `json:"models,omitempty"`
 }
 
@@ -215,6 +218,7 @@ func (h *ProviderHandler) Create(w http.ResponseWriter, r *http.Request) {
 		BaseURL:         req.BaseURL,
 		Priority:        req.Priority,
 		Weight:          req.Weight,
+		Tier:            req.Tier,
 		Status:          "active",
 		CreatedAt:       time.Now(),
 		UpdatedAt:       time.Now(),
@@ -269,6 +273,7 @@ type UpdateProviderRequest struct {
 	BaseURL  string             `json:"base_url,omitempty"`
 	Priority int                `json:"priority"`
 	Weight   int                `json:"weight"`
+	Tier     string             `json:"tier"`
 	Models   []CreateModelInput `json:"models,omitempty"`
 }
 
@@ -309,6 +314,9 @@ func (h *ProviderHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if req.Weight > 0 {
 		conn.Weight = req.Weight
 	}
+	if req.Tier != "" {
+		conn.Tier = req.Tier
+	}
 
 	if err := h.db.Providers().Update(ctx, conn); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -316,34 +324,64 @@ func (h *ProviderHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(req.Models) > 0 {
-		// Replace models or add? Usually update means sync. 
-		// For simplicity, let's just add new ones or handle as request suggests.
-		// Instruction says: "iterate through the nested Models array and create each model"
+		existingModels, _ := h.db.Models().ListByProvider(ctx, id)
+		existingByModelID := make(map[string]*db.Model)
+		for _, m := range existingModels {
+			existingByModelID[m.ModelID] = m
+		}
+
+		requestedModelIDs := make(map[string]bool)
 		for _, m := range req.Models {
-			model := &db.Model{
-				ID:               uuid.New().String(),
-				ProviderID:       conn.ID,
-				ModelID:          m.ModelID,
-				DisplayName:      m.DisplayName,
-				Provider:         conn.Provider,
-				ModelName:        m.ModelID,
-				Mode:             m.Mode,
-				Capabilities:     m.Capabilities,
-				ContextWindow:    m.ContextWindow,
-				MaxOutputTokens:  m.MaxOutputTokens,
-				InputCostPer1k:   m.InputCostPer1k,
-				OutputCostPer1k:  m.OutputCostPer1k,
-				InputPrice:       m.InputCostPer1k * 1000,
-				OutputPrice:      m.OutputCostPer1k * 1000,
-				Enabled:          m.IsActive,
-				IsActive:         m.IsActive,
-				Tags:             m.Tags,
-				DefaultTimeoutMs: m.DefaultTimeoutMs,
-				SupportsStream:   m.SupportsStream,
-				CreatedAt:        time.Now(),
-				UpdatedAt:        time.Now(),
+			requestedModelIDs[m.ModelID] = true
+			if existing, ok := existingByModelID[m.ModelID]; ok {
+				existing.DisplayName = m.DisplayName
+				existing.Mode = m.Mode
+				existing.Capabilities = m.Capabilities
+				existing.ContextWindow = m.ContextWindow
+				existing.MaxOutputTokens = m.MaxOutputTokens
+				existing.InputCostPer1k = m.InputCostPer1k
+				existing.OutputCostPer1k = m.OutputCostPer1k
+				existing.InputPrice = m.InputCostPer1k * 1000
+				existing.OutputPrice = m.OutputCostPer1k * 1000
+				existing.Enabled = m.IsActive
+				existing.IsActive = m.IsActive
+				existing.Tags = m.Tags
+				existing.DefaultTimeoutMs = m.DefaultTimeoutMs
+				existing.SupportsStream = m.SupportsStream
+				existing.UpdatedAt = time.Now()
+				h.db.Models().Update(ctx, existing)
+			} else {
+				model := &db.Model{
+					ID:               uuid.New().String(),
+					ProviderID:       conn.ID,
+					ModelID:          m.ModelID,
+					DisplayName:      m.DisplayName,
+					Provider:         conn.Provider,
+					ModelName:        m.ModelID,
+					Mode:             m.Mode,
+					Capabilities:     m.Capabilities,
+					ContextWindow:    m.ContextWindow,
+					MaxOutputTokens:  m.MaxOutputTokens,
+					InputCostPer1k:   m.InputCostPer1k,
+					OutputCostPer1k:  m.OutputCostPer1k,
+					InputPrice:       m.InputCostPer1k * 1000,
+					OutputPrice:      m.OutputCostPer1k * 1000,
+					Enabled:          m.IsActive,
+					IsActive:         m.IsActive,
+					Tags:             m.Tags,
+					DefaultTimeoutMs: m.DefaultTimeoutMs,
+					SupportsStream:   m.SupportsStream,
+					CreatedAt:        time.Now(),
+					UpdatedAt:        time.Now(),
+				}
+				h.db.Models().Create(ctx, model)
 			}
-			h.db.Models().Create(ctx, model)
+		}
+
+		for _, m := range existingModels {
+			if !requestedModelIDs[m.ModelID] {
+				h.db.Models().Delete(ctx, m.ID)
+			}
 		}
 	}
 

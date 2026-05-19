@@ -227,6 +227,7 @@ type ProviderConnection struct {
 	BaseURL         string     `json:"base_url,omitempty"`
 	Priority        int        `json:"priority"`
 	Weight          int        `json:"weight"`
+	Tier            string     `json:"tier"` // subscription, cheap, free
 	Status          string     `json:"status"`
 	LastLatencyMs   int        `json:"last_latency_ms"`
 	CooldownUntil   *time.Time `json:"cooldown_until,omitempty"`
@@ -740,6 +741,9 @@ func (r *jsonProviderRepo) Create(ctx context.Context, conn *ProviderConnection)
 	store := r.driver.load()
 	conn.CreatedAt = time.Now()
 	conn.UpdatedAt = time.Now()
+	if conn.Tier == "" {
+		conn.Tier = "subscription"
+	}
 	store.Providers[conn.ID] = conn
 	r.driver.mu.Lock()
 	r.driver.store.Providers = store.Providers
@@ -775,6 +779,9 @@ func (r *jsonProviderRepo) List(ctx context.Context) ([]*ProviderConnection, err
 func (r *jsonProviderRepo) Update(ctx context.Context, conn *ProviderConnection) error {
 	store := r.driver.load()
 	conn.UpdatedAt = time.Now()
+	if conn.Tier == "" {
+		conn.Tier = "subscription"
+	}
 	store.Providers[conn.ID] = conn
 	r.driver.mu.Lock()
 	r.driver.store.Providers = store.Providers

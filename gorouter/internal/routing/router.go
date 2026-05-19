@@ -18,6 +18,7 @@ const (
 	StrategyLatency  Strategy = "latency"
 	StrategyCost     Strategy = "cost"
 	StrategyFallback Strategy = "fallback"
+	StrategyTier     Strategy = "tier"
 )
 
 type Router struct {
@@ -115,6 +116,8 @@ func (r *Router) selectByStrategy(providers []*db.ProviderConnection, modelID st
 		return r.byCost(providers, modelID)
 	case StrategyFallback:
 		return r.byFallback(providers)
+	case StrategyTier:
+		return r.byTier(providers)
 	default:
 		return r.byPriority(providers)
 	}
@@ -181,6 +184,18 @@ func (r *Router) getProviderCost(p *db.ProviderConnection, models []*db.Model, m
 
 func (r *Router) byFallback(providers []*db.ProviderConnection) *db.ProviderConnection {
 	sort.Slice(providers, func(i, j int) bool {
+		return providers[i].Priority > providers[j].Priority
+	})
+	return providers[0]
+}
+
+func (r *Router) byTier(providers []*db.ProviderConnection) *db.ProviderConnection {
+	tierOrder := map[string]int{"free": 0, "cheap": 1, "subscription": 2}
+	sort.Slice(providers, func(i, j int) bool {
+		ti, oj := tierOrder[providers[i].Tier], tierOrder[providers[j].Tier]
+		if ti != oj {
+			return ti < oj
+		}
 		return providers[i].Priority > providers[j].Priority
 	})
 	return providers[0]

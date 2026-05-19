@@ -124,6 +124,7 @@ func (d *pgDriver) migrate() error {
 			base_url TEXT NOT NULL DEFAULT '',
 			priority INTEGER NOT NULL DEFAULT 0,
 			weight INTEGER NOT NULL DEFAULT 100,
+			tier TEXT NOT NULL DEFAULT 'subscription',
 			status TEXT NOT NULL DEFAULT 'active',
 			last_latency_ms INTEGER NOT NULL DEFAULT 0,
 			cooldown_until TIMESTAMPTZ,
@@ -274,6 +275,11 @@ func (d *pgDriver) migrate() error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_model_aliases_name ON model_aliases(name)`,
 		`CREATE INDEX IF NOT EXISTS idx_model_aliases_user_id ON model_aliases(user_id)`,
+
+		`DO $$ BEGIN
+			ALTER TABLE providers ADD COLUMN tier TEXT NOT NULL DEFAULT 'subscription';
+		EXCEPTION WHEN others THEN NULL;
+		END $$`,
 	}
 
 	tx, err := d.db.BeginTx(ctx, nil)
@@ -463,19 +469,19 @@ type pgProviderRepo struct{ driver *pgDriver }
 
 func (r *pgProviderRepo) Create(ctx context.Context, p *ProviderConnection) error {
 	_, err := r.driver.db.ExecContext(ctx,
-		`INSERT INTO providers (id,provider,name,auth_type,encrypted_secret,base_url,priority,weight,status,last_latency_ms,cooldown_until,last_error,last_error_at,backoff_level,created_by,created_at,updated_at)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
-		p.ID, p.Provider, p.Name, p.AuthType, p.EncryptedSecret, p.BaseURL, p.Priority, p.Weight, p.Status, p.LastLatencyMs, p.CooldownUntil, p.LastError, p.LastErrorAt, p.BackoffLevel, p.CreatedBy, p.CreatedAt, p.UpdatedAt)
+		`INSERT INTO providers (id,provider,name,auth_type,encrypted_secret,base_url,priority,weight,tier,status,last_latency_ms,cooldown_until,last_error,last_error_at,backoff_level,created_by,created_at,updated_at)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+		p.ID, p.Provider, p.Name, p.AuthType, p.EncryptedSecret, p.BaseURL, p.Priority, p.Weight, p.Tier, p.Status, p.LastLatencyMs, p.CooldownUntil, p.LastError, p.LastErrorAt, p.BackoffLevel, p.CreatedBy, p.CreatedAt, p.UpdatedAt)
 	return err
 }
 func (r *pgProviderRepo) FindByID(ctx context.Context, id string) (*ProviderConnection, error) {
 	row := r.driver.db.QueryRowContext(ctx,
-		`SELECT id,provider,name,auth_type,encrypted_secret,base_url,priority,weight,status,last_latency_ms,cooldown_until,last_error,last_error_at,backoff_level,created_by,created_at,updated_at FROM providers WHERE id=$1`, id)
+		`SELECT id,provider,name,auth_type,encrypted_secret,base_url,priority,weight,tier,status,last_latency_ms,cooldown_until,last_error,last_error_at,backoff_level,created_by,created_at,updated_at FROM providers WHERE id=$1`, id)
 	return r.scan(row)
 }
 func (r *pgProviderRepo) FindByProvider(ctx context.Context, provider string) ([]*ProviderConnection, error) {
 	rows, err := r.driver.db.QueryContext(ctx,
-		`SELECT id,provider,name,auth_type,encrypted_secret,base_url,priority,weight,status,last_latency_ms,cooldown_until,last_error,last_error_at,backoff_level,created_by,created_at,updated_at FROM providers WHERE provider=$1`, provider)
+		`SELECT id,provider,name,auth_type,encrypted_secret,base_url,priority,weight,tier,status,last_latency_ms,cooldown_until,last_error,last_error_at,backoff_level,created_by,created_at,updated_at FROM providers WHERE provider=$1`, provider)
 	if err != nil {
 		return nil, err
 	}
@@ -484,7 +490,7 @@ func (r *pgProviderRepo) FindByProvider(ctx context.Context, provider string) ([
 }
 func (r *pgProviderRepo) List(ctx context.Context) ([]*ProviderConnection, error) {
 	rows, err := r.driver.db.QueryContext(ctx,
-		`SELECT id,provider,name,auth_type,encrypted_secret,base_url,priority,weight,status,last_latency_ms,cooldown_until,last_error,last_error_at,backoff_level,created_by,created_at,updated_at FROM providers ORDER BY priority DESC,name`)
+		`SELECT id,provider,name,auth_type,encrypted_secret,base_url,priority,weight,tier,status,last_latency_ms,cooldown_until,last_error,last_error_at,backoff_level,created_by,created_at,updated_at FROM providers ORDER BY priority DESC,name`)
 	if err != nil {
 		return nil, err
 	}
@@ -493,8 +499,8 @@ func (r *pgProviderRepo) List(ctx context.Context) ([]*ProviderConnection, error
 }
 func (r *pgProviderRepo) Update(ctx context.Context, p *ProviderConnection) error {
 	_, err := r.driver.db.ExecContext(ctx,
-		`UPDATE providers SET name=$1,base_url=$2,priority=$3,weight=$4,status=$5,last_latency_ms=$6,encrypted_secret=$7,cooldown_until=$8,last_error=$9,last_error_at=$10,backoff_level=$11,updated_at=$12 WHERE id=$13`,
-		p.Name, p.BaseURL, p.Priority, p.Weight, p.Status, p.LastLatencyMs, p.EncryptedSecret, p.CooldownUntil, p.LastError, p.LastErrorAt, p.BackoffLevel, p.UpdatedAt, p.ID)
+		`UPDATE providers SET name=$1,base_url=$2,priority=$3,weight=$4,tier=$5,status=$6,last_latency_ms=$7,encrypted_secret=$8,cooldown_until=$9,last_error=$10,last_error_at=$11,backoff_level=$12,updated_at=$13 WHERE id=$14`,
+		p.Name, p.BaseURL, p.Priority, p.Weight, p.Tier, p.Status, p.LastLatencyMs, p.EncryptedSecret, p.CooldownUntil, p.LastError, p.LastErrorAt, p.BackoffLevel, p.UpdatedAt, p.ID)
 	return err
 }
 func (r *pgProviderRepo) Delete(ctx context.Context, id string) error {
@@ -515,7 +521,7 @@ func (r *pgProviderRepo) UpdateStatus(ctx context.Context, id, status string) er
 }
 func (r *pgProviderRepo) scan(row *sql.Row) (*ProviderConnection, error) {
 	p := &ProviderConnection{}
-	err := row.Scan(&p.ID, &p.Provider, &p.Name, &p.AuthType, &p.EncryptedSecret, &p.BaseURL, &p.Priority, &p.Weight, &p.Status, &p.LastLatencyMs, &p.CooldownUntil, &p.LastError, &p.LastErrorAt, &p.BackoffLevel, &p.CreatedBy, &p.CreatedAt, &p.UpdatedAt)
+	err := row.Scan(&p.ID, &p.Provider, &p.Name, &p.AuthType, &p.EncryptedSecret, &p.BaseURL, &p.Priority, &p.Weight, &p.Tier, &p.Status, &p.LastLatencyMs, &p.CooldownUntil, &p.LastError, &p.LastErrorAt, &p.BackoffLevel, &p.CreatedBy, &p.CreatedAt, &p.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -525,7 +531,7 @@ func (r *pgProviderRepo) scanAll(rows *sql.Rows) ([]*ProviderConnection, error) 
 	var result []*ProviderConnection
 	for rows.Next() {
 		p := &ProviderConnection{}
-		if err := rows.Scan(&p.ID, &p.Provider, &p.Name, &p.AuthType, &p.EncryptedSecret, &p.BaseURL, &p.Priority, &p.Weight, &p.Status, &p.LastLatencyMs, &p.CooldownUntil, &p.LastError, &p.LastErrorAt, &p.BackoffLevel, &p.CreatedBy, &p.CreatedAt, &p.UpdatedAt); err == nil {
+		if err := rows.Scan(&p.ID, &p.Provider, &p.Name, &p.AuthType, &p.EncryptedSecret, &p.BaseURL, &p.Priority, &p.Weight, &p.Tier, &p.Status, &p.LastLatencyMs, &p.CooldownUntil, &p.LastError, &p.LastErrorAt, &p.BackoffLevel, &p.CreatedBy, &p.CreatedAt, &p.UpdatedAt); err == nil {
 			result = append(result, p)
 		}
 	}

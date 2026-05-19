@@ -32,6 +32,7 @@ import (
 	ourmw "github.com/gorouter/gorouter/internal/middleware"
 	"github.com/gorouter/gorouter/internal/provider"
 	"github.com/gorouter/gorouter/internal/routing"
+	"github.com/gorouter/gorouter/internal/sync"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -314,11 +315,15 @@ func main() {
 	healthMonitor.Start()
 	log.Info("Health monitor started")
 
+	syncWorker := sync.NewWorker(cfg, dbManager, log)
+	syncWorker.Start()
+
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	sig := <-quit
 	log.Info("Shutting down", "signal", sig)
 
+	syncWorker.Stop()
 	healthMonitor.Stop()
 	log.Info("Health monitor stopped")
 

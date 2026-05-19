@@ -29,6 +29,8 @@ type AppConfig struct {
 	AllowedOrigins          []string
 	RTKEnabled              bool
 	CavemanLevel            string
+	OnlineSyncURL           string
+	OnlineSyncToken         string
 }
 
 func Load() *AppConfig {
@@ -45,6 +47,8 @@ func Load() *AppConfig {
 		UsageRetentionDays:      getEnvInt("GOROUTER_USAGE_RETENTION_DAYS", 180),
 		RequestLogRetentionDays: getEnvInt("GOROUTER_REQUEST_LOG_RETENTION_DAYS", 30),
 		AuditLogRetentionDays:   getEnvInt("GOROUTER_AUDIT_LOG_RETENTION_DAYS", 365),
+		OnlineSyncURL:           getEnv("GOROUTER_ONLINE_SYNC_URL", ""),
+		OnlineSyncToken:         getEnv("GOROUTER_ONLINE_SYNC_TOKEN", ""),
 	}
 	cfg.RequireAPIKey = getEnvBool("GOROUTER_REQUIRE_API_KEY", false)
 	cfg.EnableRequestBodyLog = getEnvBool("GOROUTER_ENABLE_REQUEST_BODY_LOG", false)
@@ -144,7 +148,7 @@ func mustGenerateOrPanic(key string) string {
 
 func isValidStrategy(s string) bool {
 	switch s {
-	case "priority", "weighted", "latency", "cost", "fallback":
+	case "priority", "weighted", "latency", "cost", "fallback", "tier":
 		return true
 	}
 	return false

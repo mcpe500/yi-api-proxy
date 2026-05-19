@@ -36,6 +36,26 @@ func CompressWithFilter(content string, filterName string) (string, int) {
 		filter = NewGrepFilter()
 	case "build":
 		filter = NewBuildFilter()
+	case "test":
+		filter = NewTestFilter()
+	case "gitops":
+		filter = NewGitOpsFilter()
+	case "github":
+		filter = NewGithubFilter()
+	case "pkgmgr":
+		filter = NewPkgMgrFilter()
+	case "infra":
+		filter = NewInfraFilter()
+	case "network":
+		filter = NewNetworkFilter()
+	case "err":
+		filter = &AnalysisFilter{Mode: "err"}
+	case "log":
+		filter = &AnalysisFilter{Mode: "log"}
+	case "json":
+		filter = &AnalysisFilter{Mode: "json"}
+	case "summary":
+		filter = &AnalysisFilter{Mode: "summary"}
 	default:
 		filter = NewAutoDetectFilter()
 	}
@@ -54,5 +74,10 @@ func logCompression(filter string, original, saved int) {
 }
 
 func GetAvailableFilters() []string {
-	return []string{"gitdiff", "ls", "grep", "build", "autodetect"}
+	return []string{
+		"gitdiff", "ls", "grep", "build",
+		"test", "gitops", "github", "pkgmgr",
+		"infra", "network", "err", "log",
+		"json", "summary", "autodetect",
+	}
 }
