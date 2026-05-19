@@ -10,6 +10,14 @@ tags: [database, abstraction, sqlite, postgresql]
 
 DatabaseManager adalah abstraksi database yang mendukung 3 driver: JSON, SQLite, dan PostgreSQL.
 
+## 9Router Parity: Provider 1:N Models
+
+Sistem mengadopsi model relasi **Provider 1:N Models**. Provider tidak lagi memiliki model tunggal yang statis, melainkan mengelola sekumpulan model sebagai nested resources.
+
+- **Nested Resources**: Model didefinisikan secara inline di dalam konfigurasi provider.
+- **Dynamic Catalog**: Saat provider aktif, semua model yang didukungnya otomatis terdaftar ke dalam global model catalog.
+- **Provider-Aware Routing**: Router dapat memilih provider yang tepat berdasarkan `model_id` yang tersedia di dalam daftar model provider tersebut.
+
 ## Architecture
 
 ```go

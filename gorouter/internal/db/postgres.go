@@ -571,6 +571,14 @@ func (r *pgModelRepo) ListByProvider(ctx context.Context, providerID string) ([]
 	defer rows.Close()
 	return r.scanAll(rows)
 }
+func (r *pgModelRepo) FindByModelID(ctx context.Context, modelID string) ([]*Model, error) {
+	rows, err := r.driver.db.QueryContext(ctx, `SELECT id,provider_id,model_id,display_name,provider,model_name,mode,capabilities,context_window,max_output_tokens,input_price,output_price,input_cost_per_1k,output_cost_per_1k,enabled,is_active,tags,default_timeout_ms,supports_stream,created_at,updated_at FROM models WHERE model_id=$1 AND enabled=true ORDER BY display_name`, modelID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return r.scanAll(rows)
+}
 func (r *pgModelRepo) Update(ctx context.Context, m *Model) error {
 	caps, _ := json.Marshal(m.Capabilities)
 	tags, _ := json.Marshal(m.Tags)

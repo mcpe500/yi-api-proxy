@@ -34,9 +34,16 @@ func (h *UserCombosHandler) Register(r chi.Router) {
 		r.Put("/combos/{id}", h.UpdateCombo)
 		r.Delete("/combos/{id}", h.DeleteCombo)
 		r.Post("/combos/{id}/items", h.AddComboItem)
+		r.Post("/combos/auto-generate", h.AutoGenerateCombo)
 		r.Delete("/combos/{id}/items/{itemId}", h.RemoveComboItem)
 		r.Put("/combos/{id}/items/reorder", h.ReorderComboItems)
 		r.Post("/combos/{id}/execute", h.ExecuteCombo)
+	})
+}
+
+func (h *UserCombosHandler) RegisterAdmin(r chi.Router) {
+	r.Route("/combos", func(r chi.Router) {
+		r.Post("/auto-generate", h.AutoGenerateCombo)
 	})
 }
 
@@ -196,6 +203,14 @@ type AddItemRequest struct {
 	TimeoutSeconds int    `json:"timeout_seconds,omitempty"`
 }
 
+type AutoGenerateRequest struct {
+	Name        string   `json:"name"`
+	Description string   `json:"description,omitempty"`
+	ModelIDs    []string `json:"model_ids"`
+	IsActive    bool     `json:"is_active,omitempty"`
+	Priority    int      `json:"priority,omitempty"`
+}
+
 func (h *UserCombosHandler) AddComboItem(w http.ResponseWriter, r *http.Request) {
 	user := middleware.GetUserFromContext(r.Context())
 	if user == nil {
@@ -221,8 +236,44 @@ func (h *UserCombosHandler) AddComboItem(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if req.ProviderID == "" || req.ModelID == "" {
-		http.Error(w, `{"error":"provider_id and model_id are required"}`, http.StatusBadRequest)
+	if req.ModelID == "" {
+		http.Error(w, `{"error":"model_id is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	if req.ProviderID == "" {
+		// Implicit fallback: find all models with this model_id
+		models, err := h.db.Models().FindByModelID(r.Context(), req.ModelID)
+		if err != nil {
+			http.Error(w, `{"error":"failed to find models"}`, http.StatusInternalServerError)
+			return
+		}
+		if len(models) == 0 {
+			http.Error(w, `{"error":"no enabled models found for model_id: `+req.ModelID+`"}`, http.StatusNotFound)
+			return
+		}
+
+		var addedItems []*db.ComboItem
+		for _, m := range models {
+			item := &db.ComboItem{
+				ID:             uuid.New().String(),
+				ComboID:        comboID,
+				ProviderID:     m.ProviderID,
+				ModelID:        m.ModelID,
+				Priority:       req.Priority,
+				MaxRetries:     req.MaxRetries,
+				TimeoutSeconds: req.TimeoutSeconds,
+			}
+			if err := h.cm.AddItem(r.Context(), item); err != nil {
+				http.Error(w, `{"error":"failed to add item: `+err.Error()+`"}`, http.StatusInternalServerError)
+				return
+			}
+			addedItems = append(addedItems, item)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(addedItems)
 		return
 	}
 
@@ -244,6 +295,64 @@ func (h *UserCombosHandler) AddComboItem(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(item)
+}
+
+func (h *UserCombosHandler) AutoGenerateCombo(w http.ResponseWriter, r *http.Request) {
+	user := middleware.GetUserFromContext(r.Context())
+	if user == nil {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+
+	var req AutoGenerateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+
+	if req.Name == "" || len(req.ModelIDs) == 0 {
+		http.Error(w, `{"error":"name and model_ids are required"}`, http.StatusBadRequest)
+		return
+	}
+
+	c := &db.Combo{
+		ID:          uuid.New().String(),
+		Name:        req.Name,
+		Description: req.Description,
+		UserID:      user.UserID,
+		IsActive:    req.IsActive,
+		Items:       []*db.ComboItem{},
+	}
+
+	if err := h.cm.Create(r.Context(), c); err != nil {
+		http.Error(w, `{"error":"failed to create combo"}`, http.StatusInternalServerError)
+		return
+	}
+
+	for _, modelID := range req.ModelIDs {
+		models, err := h.db.Models().FindByModelID(r.Context(), modelID)
+		if err != nil {
+			continue
+		}
+
+		for _, m := range models {
+			item := &db.ComboItem{
+				ID:         uuid.New().String(),
+				ComboID:    c.ID,
+				ProviderID: m.ProviderID,
+				ModelID:    m.ModelID,
+				Priority:   req.Priority,
+			}
+			h.cm.AddItem(r.Context(), item)
+		}
+	}
+
+	// Reload combo with items
+	updated, _ := h.cm.GetCombo(r.Context(), c.ID)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(updated)
 }
 
 func (h *UserCombosHandler) RemoveComboItem(w http.ResponseWriter, r *http.Request) {

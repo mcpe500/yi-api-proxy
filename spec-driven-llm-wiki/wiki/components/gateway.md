@@ -33,13 +33,19 @@ Gateway adalah OpenAI-compatible API endpoint utama yang melayani request dari u
 ```
 1. API key auth middleware (RequireAPIKey)
 2. Rate limiter middleware
-3. Resolve model (combo first, then direct model lookup)
+3. Resolve model (combo first, then direct model lookup, then implicit fallback)
 4. Get adapter from registry
 5. Translate request via adapter
 6. Execute upstream HTTP request
 7. Record usage event
 8. Stream/JSON response
 ```
+
+## Model Resolution Logic
+
+Gateway mendukung dua mekanisme resolusi model:
+- **Explicit Combos**: Mencari model di dalam daftar Combo yang didefinisikan user.
+- **Implicit Fallback**: Jika `model_id` bukan combo, sistem mencari semua provider aktif yang mendukung `model_id` tersebut dan melakukan fallback otomatis di antara mereka.
 
 ## Streaming SSE
 

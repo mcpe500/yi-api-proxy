@@ -37,6 +37,14 @@ type ComboItem struct {
 | latency | Lowest last request latency | IMPLEMENTED |
 | fallback | Priority-based retry chain | IMPLEMENTED |
 
+## Implicit Model Fallback
+
+Jika request menggunakan `model_id` yang bukan merupakan Combo ID:
+1. Sistem mencari semua provider aktif yang memiliki `model_id` tersebut di dalam daftar model mereka.
+2. Provider-provider ini diurutkan berdasarkan prioritas.
+3. Gateway mencoba mengeksekusi request ke provider pertama.
+4. Jika gagal (rate limit, server error), otomatis lanjut ke provider berikutnya yang mendukung model tersebut.
+
 ## Fallback Eligibility
 
 ### Eligible for Fallback

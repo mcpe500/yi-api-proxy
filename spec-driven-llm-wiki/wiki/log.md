@@ -225,3 +225,11 @@ Implemented all remaining P3 architectural features:
 - Tests: 5 passed
 - New endpoints: 8 (images, audio×2, search×2, metrics, responses streaming, messages streaming)
 - New files: images.go, audio.go, search.go, oauth.go, metrics.go
+
+## [2026-05-19] wiki | 9Router Parity Documentation
+
+Updated documentation for 9router parity architectural improvements:
+- dbmanager.md: Documented Provider 1:N Models relationship (nested resources).
+- gateway.md: Added implicit fallback by model_id support.
+- routing.md: Documented automatic fallback logic for model_id requests.
+- New guide: guides/9router-parity.md created.

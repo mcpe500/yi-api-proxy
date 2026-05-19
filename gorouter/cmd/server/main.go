@@ -198,6 +198,9 @@ func main() {
 	userHandler := admin.NewUserHandler(dbManager, auditLogger)
 	providerHandler := admin.NewProviderHandler(dbManager, auditLogger)
 
+	comboManager := combo.NewComboManager(dbManager)
+	userCombosHandler := handlers.NewUserCombosHandler(comboManager, dbManager, jwtSecret)
+
 	r.Route("/admin", func(r chi.Router) {
 		r.Use(ourmw.AuditContextMiddleware())
 		r.Use(ourmw.RequireAuth(jwtSecret))
@@ -225,6 +228,7 @@ func main() {
 		})
 		adminApiKeyHandler.RegisterAdminRoutes(r)
 		adminApiKeyHandler.RegisterUserKeyRoutes(r)
+		userCombosHandler.RegisterAdmin(r)
 		r.Mount("/rate-limits", rateLimitHandler.Routes())
 		r.Mount("/users", userHandler.Routes())
 		r.Mount("/providers", providerHandler.Routes())
@@ -233,8 +237,6 @@ func main() {
 	userKeyHandler.RegisterRoutes(r)
 	usageHandler := user.NewUsageHandler(dbManager)
 
-	comboManager := combo.NewComboManager(dbManager)
-	userCombosHandler := handlers.NewUserCombosHandler(comboManager, dbManager, jwtSecret)
 	r.Route("/me", func(r chi.Router) {
 		userCombosHandler.Register(r)
 		r.Route("/usage", func(r chi.Router) {

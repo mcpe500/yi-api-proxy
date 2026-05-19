@@ -93,6 +93,7 @@ type ModelRepository interface {
 	List(ctx context.Context) ([]*Model, error)
 	ListEnabled(ctx context.Context) ([]*Model, error)
 	ListByProvider(ctx context.Context, providerID string) ([]*Model, error)
+	FindByModelID(ctx context.Context, modelID string) ([]*Model, error)
 	Update(ctx context.Context, model *Model) error
 	Delete(ctx context.Context, id string) error
 }
@@ -885,6 +886,17 @@ func (r *jsonModelRepo) ListByProvider(ctx context.Context, providerID string) (
 	var result []*Model
 	for _, m := range store.Models {
 		if m.ProviderID == providerID || m.Provider == providerID {
+			result = append(result, m)
+		}
+	}
+	return result, nil
+}
+
+func (r *jsonModelRepo) FindByModelID(ctx context.Context, modelID string) ([]*Model, error) {
+	store := r.driver.load()
+	var result []*Model
+	for _, m := range store.Models {
+		if m.ModelID == modelID && m.Enabled {
 			result = append(result, m)
 		}
 	}
