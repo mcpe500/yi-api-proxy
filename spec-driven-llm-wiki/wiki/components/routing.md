@@ -44,9 +44,11 @@ ProviderConnection memiliki `tier`:
 
 | Tier | Meaning | Priority |
 |---|---|---|
-| `subscription` | paid subscription/provider account | 1st |
+| `subscription` | paid subscription/provider account | 1st (highest) |
 | `cheap` | low-cost API provider | 2nd |
-| `free` | free quota/account/provider | 3rd |
+| `free` | free quota/account/provider | 3rd (lowest) |
+
+**Priority values (lower = higher priority)**: subscription=0, cheap=1, free=2
 
 `GOROUTER_ROUTING_STRATEGY=tier` mengurutkan kandidat provider berdasarkan tier, lalu tetap memakai fallback/cooldown jika provider gagal.
 

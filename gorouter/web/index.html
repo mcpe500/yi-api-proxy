@@ -49,6 +49,15 @@
                 <a href="#/models" class="nav-link" data-route="models">
                     <span class="nav-icon">&#9881;</span> Models
                 </a>
+                <a href="#/aliases" class="nav-link" data-route="aliases">
+                    <span class="nav-icon">&#8644;</span> Aliases
+                </a>
+                <a href="#/combos" class="nav-link" data-route="combos">
+                    <span class="nav-icon">&#9776;</span> Combos
+                </a>
+                <a href="#/quotas" class="nav-link" data-route="quotas">
+                    <span class="nav-icon">&#9632;</span> Quotas
+                </a>
                 <a href="#/usage" class="nav-link" data-route="usage">
                     <span class="nav-icon">&#9733;</span> Usage
                 </a>
@@ -132,6 +141,51 @@
                     <div class="table-wrap">
                         <table id="models-table">
                             <thead><tr><th>Display Name</th><th>Model ID</th><th>Provider</th><th>Context</th><th>Enabled</th><th>Stream</th><th>Actions</th></tr></thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div id="section-aliases" class="section hidden">
+                <div class="section-header">
+                    <h2 class="page-title">Model Aliases</h2>
+                    <button class="btn btn-primary" id="btn-add-alias">+ Add Alias</button>
+                </div>
+                <div class="card">
+                    <div class="table-wrap">
+                        <table id="aliases-table">
+                            <thead><tr><th>Name</th><th>Target ID</th><th>Provider</th><th>Description</th><th>Actions</th></tr></thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div id="section-combos" class="section hidden">
+                <div class="section-header">
+                    <h2 class="page-title">Model Combos</h2>
+                    <button class="btn btn-primary" id="btn-add-combo">+ Auto-Generate</button>
+                </div>
+                <div class="card">
+                    <div class="table-wrap">
+                        <table id="combos-table">
+                            <thead><tr><th>Name</th><th>Description</th><th>User</th><th>Items</th><th>Status</th><th>Actions</th></tr></thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div id="section-quotas" class="section hidden">
+                <div class="section-header">
+                    <h2 class="page-title">User Quotas</h2>
+                    <button class="btn btn-primary" id="btn-add-quota">+ Add Quota</button>
+                </div>
+                <div class="card">
+                    <div class="table-wrap">
+                        <table id="quotas-table">
+                            <thead><tr><th>User ID</th><th>Token Cap</th><th>Cost Cap</th><th>Used Tokens</th><th>Used Cost</th><th>Reset At</th><th>Actions</th></tr></thead>
                             <tbody></tbody>
                         </table>
                     </div>

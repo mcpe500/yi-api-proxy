@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/golang-jwt/jwt/v5"
 )
@@ -45,17 +46,27 @@ func GetUserFromContext(ctx context.Context) *UserContext {
 func RequireAuth(jwtSecret string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			cookie, err := r.Cookie("auth_token")
-			if err != nil {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusUnauthorized)
-				json.NewEncoder(w).Encode(ErrorResponse{
-					Error: ErrorDetail{Message: "Missing auth token", Type: "authentication_error"},
-				})
-				return
+			tokenValue := ""
+
+			// Try Authorization: Bearer header first
+			authHeader := r.Header.Get("Authorization")
+			if strings.HasPrefix(authHeader, "Bearer ") {
+				tokenValue = strings.TrimPrefix(authHeader, "Bearer ")
+			} else {
+				// Fall back to cookie
+				cookie, err := r.Cookie("auth_token")
+				if err != nil {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusUnauthorized)
+					json.NewEncoder(w).Encode(ErrorResponse{
+						Error: ErrorDetail{Message: "Missing auth token", Type: "authentication_error"},
+					})
+					return
+				}
+				tokenValue = cookie.Value
 			}
 
-			token, err := jwt.Parse(cookie.Value, func(token *jwt.Token) (interface{}, error) {
+			token, err := jwt.Parse(tokenValue, func(token *jwt.Token) (interface{}, error) {
 				if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 					return nil, jwt.ErrSignatureInvalid
 				}

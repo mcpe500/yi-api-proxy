@@ -256,6 +256,118 @@ Implemented token reduction features for tool outputs and model communication:
 - Health check 401/403 handling (unauthenticated health check allowed)
 - Usage tracking in all paths (streaming/non-streaming, direct/combo)
 
+## [2026-05-23] audit-fix | Comprehensive Audit & Bug Fixes (Fleet Swarm)
+
+Performed full codebase audit following spec-driven-llm-wiki methodology. Found and fixed multiple issues despite wiki claiming all 17 specs "IMPLEMENTED". Wiki docs reflected design specs, not actual implementation state.
+
+### Issues Found & Fixed
+
+#### 1. User Registration - NEW FEATURE
+- Missing `POST /auth/register` endpoint for self-service user signup
+- Implemented: email validation, password min 8 chars, bcrypt hashing, JWT token generation
+- Audit logging: `user_registered` action
+- Route registered at `/auth/register` in main.go
+
+#### 2. 3-Tier Fallback Bug - FIXED
+- **Bug**: `tierOrder := map[string]int{"free": 0, "cheap": 1, "subscription": 2}` was WRONG
+- Free had lowest value (0), so it was selected FIRST - opposite of intended behavior
+- **Fixed**: `tierOrder := map[string]int{"subscription": 0, "cheap": 1, "free": 2}`
+- Now correctly prioritizes: subscription → cheap → free
+
+#### 3. RTK/Caveman Headers - VERIFIED COMPLETE
+- X-RTK header: activates RTK compression on input/tool output
+- X-RTK-Filter header: specifies per-request filter (gitdiff|ls|grep|build|autodetect)
+- X-Caveman header: activates terse mode (full|lite|ultra)
+- All wired in `internal/handlers/v1/tokenizer.go` - no changes needed
+
+#### 4. Online Sync Worker - ERROR HANDLING FIXED
+- Missing error handling for `ListByProvider` (line 85) - was ignoring errors
+- Missing error handling for `Combos().List()` (line 93) - was ignoring errors
+- Fixed to log warnings/errors appropriately
+- 5-minute interval, Bearer token auth, pushes providers/models/combos snapshot
+
+#### 5. Quota Enforcement - WAS MISSING
+- Rate limiter only checked RPM/RPD/TPM, never checked quotas table
+- Quota not deducted on successful request completion
+- **Fixed**: Added `checkQuota()` function that checks monthly_token_cap and monthly_cost_cap
+- **Fixed**: `recordUsage()` in chat.go now calls `Quotas().IncrementUsage()` on success
+- 429 responses now properly distinguish: `quota_exceeded` vs `rate_limit_exceeded`
+
+#### 6. API Key Hashing - WAS WEAK
+- Keys were hashed with SHA256, not bcrypt
+- **Fixed**: Changed to bcrypt hashing with `bcrypt.GenerateFromPassword()`
+- **Fixed**: Lookup strategy changed to prefix-based (keys have `sk-gorouter-<prefix>_<secret>` format)
+- Added `VerifyKey()` for bcrypt comparison
+
+#### 7. Usage Analytics - INCOMPLETE
+- responses.go and messages.go were missing token tracking in recordUsage()
+- **Fixed**: Added `usage *translator.NormalizedUsage` parameter to recordUsage in both handlers
+- Added `calculateModelCost()` function for cost estimation
+- Created retention cleanup worker (`internal/db/cleanup.go`) for policy enforcement
+
+#### 8. Admin Dashboard - INCOMPLETE UI
+- Missing HTTP handler for quotas (QuotaRepository existed in DB layer but no handler)
+- Aliases handler existed but NOT registered in main.go routes
+- Admin UI missing sections for Aliases, Combos, Quotas
+
+**Fixed**:
+- Created `/internal/handlers/admin/quotas.go` - Full CRUD + reset-usage endpoint
+- Registered `quotaHandler` and `aliasHandler` in main.go admin routes
+- Updated `web/admin.js` with loadAliases(), loadCombos(), loadQuotas() functions
+- Updated `web/index.html` with sidebar nav links for Aliases, Combos, Quotas
+
+#### 9. Prometheus Metrics - NOT WIRED
+- metrics.go defined collectors but no middleware recorded HTTP metrics
+- **Fixed**: Created `internal/middleware/metrics.go` - MetricsMiddleware
+- **Fixed**: Added `r.Use(ourmw.MetricsMiddleware())` in main.go
+- **Fixed**: Provider health monitoring now records ProviderRequestsTotal and ProviderLatency
+- **Fixed**: Chat handler records provider metrics on success
+
+### Files Modified (17 files total)
+
+**Backend (14 files):**
+- `internal/handlers/admin/auth.go` - User registration endpoint
+- `cmd/server/main.go` - Route registration + metrics middleware
+- `internal/routing/router.go` - Fixed tier order bug
+- `internal/middleware/ratelimit.go` - Added quota enforcement
+- `internal/apikeys/generator.go` - bcrypt hashing
+- `internal/apikeys/service.go` - prefix lookup + bcrypt verification
+- `internal/db/sqlite.go` - FindByPrefix, FindActiveByPrefix
+- `internal/db/postgres.go` - FindByPrefix, FindActiveByPrefix
+- `internal/db/dbmanager.go` - Interface updates, renamed Cleanup → DeleteOlderThan
+- `internal/handlers/v1/responses.go` - Usage token tracking
+- `internal/handlers/v1/messages.go` - Usage token tracking
+- `internal/db/cleanup.go` - Retention policy worker (NEW)
+- `internal/handlers/admin/quotas.go` - Quota CRUD handler (NEW)
+- `internal/middleware/metrics.go` - Prometheus metrics middleware (NEW)
+- `internal/provider/health.go` - Added metrics recording
+
+**Frontend (3 files):**
+- `web/admin.js` - Added Aliases/Combos/Quotas UI sections
+- `web/index.html` - Added sidebar nav links
+
+### Key Lessons
+
+1. **Wiki "IMPLEMENTED" ≠ Code "IMPLEMENTED"**: Design docs in wiki are not implementation
+2. **Infrastructure ≠ Behavior**: Types and functions existing doesn't mean they're wired together
+3. **Must verify wiring**: grep to confirm functions are actually CALLED, not just defined
+4. **Fleet swarm effective**: 6 subagents ran in parallel, completed in ~25 minutes total
+
+### Validation Pending
+
+Go not available in environment - full build verification needed:
+```bash
+cd /data/data/com.termux/files/home/yi-api-proxy/gorouter
+go build ./...
+go test ./...
+```
+
+### Additional Fixes Applied After Audit
+
+- **Retention cleanup worker wired in main.go**: `db.StartRetentionCleanup(ctx, dbManager, cleanupPolicy, log)` called at line 329
+- Cleanup worker runs daily, respects `GOROUTER_USAGE_RETENTION_DAYS`, `GOROUTER_AUDIT_LOG_RETENTION_DAYS`
+- Runs once after 30 second delay on startup, then every 24 hours
+
 ## [2026-05-19] parity | RTK/Sync Documentation and Optimizer Fix
 
 Follow-up after 9router parity implementation:

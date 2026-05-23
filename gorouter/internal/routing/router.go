@@ -190,7 +190,7 @@ func (r *Router) byFallback(providers []*db.ProviderConnection) *db.ProviderConn
 }
 
 func (r *Router) byTier(providers []*db.ProviderConnection) *db.ProviderConnection {
-	tierOrder := map[string]int{"free": 0, "cheap": 1, "subscription": 2}
+	tierOrder := map[string]int{"subscription": 0, "cheap": 1, "free": 2}
 	sort.Slice(providers, func(i, j int) bool {
 		ti, oj := tierOrder[providers[i].Tier], tierOrder[providers[j].Tier]
 		if ti != oj {

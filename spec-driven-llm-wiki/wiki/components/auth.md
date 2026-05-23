@@ -36,14 +36,19 @@ RequireAdmin() → checks user.Role == "admin"
 ```go
 // Key format
 sk-gorouter-<prefix>_<secret>
-Example: sk-gorouter-prod_a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6
+Example: sk-gorouter-abc123_x4k9m2p8q1r7n3h5j6t0w5y2z4
 
 // Request header
-Authorization: Bearer sk-gorouter-xxx
+Authorization: Bearer sk-gorouter-abc123_x4k9m2p8q1r7n3h5j6t0w5y2z4
 
 // Storage
-key_prefix = "sk-gorouter-prod"  // for lookup
-key_hash = SHA256(full_key)      // for validation (never store plaintext)
+key_prefix = "abc123"  // for lookup (indexed)
+key_hash = bcrypt(hash)  // for validation (cost 10)
+
+// Lookup strategy
+1. Extract prefix from key (between sk-gorouter- and _)
+2. Find active key by prefix (fast indexed lookup)
+3. Verify full key using bcrypt.CompareHashAndPassword
 ```
 
 ## RBAC Matrix
@@ -51,13 +56,32 @@ key_hash = SHA256(full_key)      // for validation (never store plaintext)
 | Action | Admin | User |
 |--------|-------|------|
 | Create user/admin | Yes | No |
+| Self-service register | Yes | Yes |
 | Edit/suspend/delete user | Yes | No |
 | Create API key | Yes | Own only |
 | Manage providers | Yes | No |
 | Manage models/combos | Yes | No |
+| Manage quotas/rate limits | Yes | No |
 | View all usage | Yes | Own only |
 | View audit logs | Yes | No |
 | Use /v1/* gateway | If has key | If has key |
+
+## Self-Service Registration
+
+```go
+// User registration
+POST /auth/register
+Body: { "email": "user@example.com", "name": "User Name", "password": "password123" }
+Response: { "token": "...", "expires_at": ..., "user": { "id": "...", "email": "...", "role": "user" } }
+
+// Validation
+- Email: required, valid format
+- Password: min 8 characters
+- Name: required
+- Duplicate email → 409 Conflict
+- Creates user with role="user", status="active"
+- Returns JWT token (24h expiry)
+```
 
 ## Bootstrap Admin
 

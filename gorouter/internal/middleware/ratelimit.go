@@ -77,11 +77,20 @@ func (rl *RateLimiter) Middleware() func(http.Handler) http.Handler {
 				w.Header().Set("Content-Type", "application/json")
 				w.Header().Set("Retry-After", fmt.Sprintf("%d", retryAfter))
 				w.WriteHeader(http.StatusTooManyRequests)
+
+				// Determine error type based on limitType
+				errType := "rate_limit_exceeded"
+				errCode := "rate_limit_exceeded"
+				if limitType == "monthly_token_quota_exceeded" || limitType == "monthly_cost_quota_exceeded" {
+					errType = "quota_exceeded"
+					errCode = "quota_exceeded"
+				}
+
 				json.NewEncoder(w).Encode(map[string]interface{}{
 					"error": map[string]interface{}{
 						"message": fmt.Sprintf("Rate limit exceeded: %s", limitType),
-						"type":    "rate_limit_exceeded",
-						"code":    "rate_limit_exceeded",
+						"type":    errType,
+						"code":    errCode,
 					},
 					"retry_after": retryAfter,
 				})
@@ -94,6 +103,14 @@ func (rl *RateLimiter) Middleware() func(http.Handler) http.Handler {
 }
 
 func (rl *RateLimiter) checkLimits(userID string) (bool, int, string) {
+	// Check quota first (before rate limits)
+	if rl.cfg.DB != nil {
+		quotaAllowed, retryAfter, quotaType := rl.checkQuota(userID)
+		if !quotaAllowed {
+			return false, retryAfter, quotaType
+		}
+	}
+
 	limit := rl.getLimit(userID)
 
 	now := time.Now().Unix()
@@ -141,6 +158,62 @@ func (rl *RateLimiter) checkLimits(userID string) (bool, int, string) {
 	window.daily = append(window.daily, now)
 
 	return true, 0, ""
+}
+
+func (rl *RateLimiter) checkQuota(userID string) (bool, int, string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	quota, err := rl.cfg.DB.Quotas().FindByUserID(ctx, userID)
+	if err != nil || quota == nil {
+		// No quota set for user - allow
+		return true, 0, ""
+	}
+
+	now := time.Now()
+
+	// Check if monthly period has reset
+	if quota.ResetAt.Before(now) {
+		// Reset monthly usage
+		if err := rl.cfg.DB.Quotas().ResetMonthly(ctx, userID); err != nil {
+			// Log error but allow request
+			return true, 0, ""
+		}
+		quota.UsedTokens = 0
+		quota.UsedCost = 0
+		quota.ResetAt = now.AddDate(0, 1, 0)
+	}
+
+	// Check token quota
+	if quota.MonthlyTokenCap > 0 && quota.UsedTokens >= quota.MonthlyTokenCap {
+		retryAfter := int(quota.ResetAt.Sub(now).Seconds())
+		if retryAfter < 60 {
+			retryAfter = 60
+		}
+		return false, retryAfter, "monthly_token_quota_exceeded"
+	}
+
+	// Check cost quota
+	if quota.MonthlyCostCap > 0 && quota.UsedCost >= quota.MonthlyCostCap {
+		retryAfter := int(quota.ResetAt.Sub(now).Seconds())
+		if retryAfter < 60 {
+			retryAfter = 60
+		}
+		return false, retryAfter, "monthly_cost_quota_exceeded"
+	}
+
+	return true, 0, ""
+}
+
+func (rl *RateLimiter) RecordUsage(userID string, tokens int64, cost float64) {
+	if rl.cfg.DB == nil || userID == "" {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	rl.cfg.DB.Quotas().IncrementUsage(ctx, userID, tokens, cost)
 }
 
 func (rl *RateLimiter) getLimit(userID string) *db.RateLimit {

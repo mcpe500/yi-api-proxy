@@ -9,6 +9,7 @@ import (
 
 	"github.com/gorouter/gorouter/internal/crypto"
 	"github.com/gorouter/gorouter/internal/db"
+	"github.com/gorouter/gorouter/internal/metrics"
 )
 
 type HealthMonitor struct {
@@ -128,6 +129,10 @@ func (h *HealthMonitor) recordSuccess(providerID string, latencyMs int) {
 		p.BackoffLevel = 0
 	}
 	h.db.Providers().Update(ctx, p)
+
+	// Record provider health metrics
+	metrics.ProviderRequestsTotal.WithLabelValues(p.Provider, p.Name, "success").Inc()
+	metrics.ProviderLatency.WithLabelValues(p.Provider).Observe(float64(latencyMs) / 1000.0)
 }
 
 func (h *HealthMonitor) recordFailure(providerID string, errMsg string) {
@@ -151,6 +156,9 @@ func (h *HealthMonitor) recordFailure(providerID string, errMsg string) {
 	}
 
 	h.db.Providers().Update(ctx, p)
+
+	// Record provider failure metric
+	metrics.ProviderRequestsTotal.WithLabelValues(p.Provider, p.Name, "failure").Inc()
 }
 
 func getDefaultURL(provider string) string {

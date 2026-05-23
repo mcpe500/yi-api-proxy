@@ -147,6 +147,7 @@ func main() {
 	r.Use(chimw.RealIP)
 	r.Use(chimw.Recoverer)
 	r.Use(chimw.CleanPath)
+	r.Use(ourmw.MetricsMiddleware())
 
 	allowCreds := !(len(cfg.AllowedOrigins) == 1 && cfg.AllowedOrigins[0] == "*")
 	r.Use(cors.Handler(cors.Options{
@@ -182,20 +183,35 @@ func main() {
 
 	r.Handle("/metrics", promhttp.Handler())
 
-	// --- Auth routes ---
+	// --- API prefix for web UI compatibility ---
+	r.Route("/api", func(r chi.Router) {
+		// Auth routes
+		authHandler := admin.NewAuthHandler(dbManager.Users(), jwtSecret, auditLogger)
+		r.Route("/auth", func(r chi.Router) {
+			r.Post("/login", authHandler.Login)
+			r.Post("/refresh", authHandler.Refresh)
+			r.Post("/logout", authHandler.Logout)
+			r.Post("/register", authHandler.Register)
+		})
+	})
+
+	// --- Auth routes (also available at root) ---
 	authHandler := admin.NewAuthHandler(dbManager.Users(), jwtSecret, auditLogger)
 	r.Route("/auth", func(r chi.Router) {
 		r.Post("/login", authHandler.Login)
 		r.Post("/refresh", authHandler.Refresh)
 		r.Post("/logout", authHandler.Logout)
+		r.Post("/register", authHandler.Register)
 	})
 
-	// --- Admin routes ---
+// --- Admin routes ---
 	dashboardHandler := admin.NewDashboardHandler(dbManager)
 	systemHandler := admin.NewSystemHandler(cfg, Version)
 	auditHandler := admin.NewAuditHandler(dbManager)
 	adminApiKeyHandler := handlers.NewAdminApiKeyHandler(apiKeySvc, auditLogger)
 	rateLimitHandler := admin.NewRateLimitHandler(dbManager, auditLogger)
+	quotaHandler := admin.NewQuotaHandler(dbManager, auditLogger)
+	aliasHandler := admin.NewAliasHandler(dbManager)
 	userHandler := admin.NewUserHandler(dbManager, auditLogger)
 	providerHandler := admin.NewProviderHandler(dbManager, auditLogger)
 
@@ -225,12 +241,14 @@ func main() {
 			r.Post("/", modelHandler.CreateModel)
 			r.Get("/{id}", modelHandler.GetModel)
 			r.Put("/{id}", modelHandler.UpdateModel)
-		r.Delete("/{id}", modelHandler.DeleteModel)
+			r.Delete("/{id}", modelHandler.DeleteModel)
 		})
 		adminApiKeyHandler.RegisterAdminRoutes(r)
 		adminApiKeyHandler.RegisterUserKeyRoutes(r)
 		userCombosHandler.RegisterAdmin(r)
 		r.Mount("/rate-limits", rateLimitHandler.Routes())
+		r.Mount("/quotas", quotaHandler.Routes())
+		r.Mount("/aliases", aliasHandler.Routes())
 		r.Mount("/users", userHandler.Routes())
 		r.Mount("/providers", providerHandler.Routes())
 	})
@@ -318,6 +336,11 @@ func main() {
 
 	syncWorker := sync.NewWorker(cfg, dbManager, log)
 	syncWorker.Start()
+
+	// Start retention cleanup worker
+	ctx := context.Background()
+	cleanupPolicy := db.DefaultRetentionPolicy(cfg.UsageRetentionDays, cfg.RequestLogRetentionDays, cfg.AuditLogRetentionDays)
+	db.StartRetentionCleanup(ctx, dbManager, cleanupPolicy, log)
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)

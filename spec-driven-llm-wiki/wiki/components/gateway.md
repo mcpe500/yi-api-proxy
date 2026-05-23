@@ -28,6 +28,35 @@ Gateway adalah OpenAI-compatible API endpoint utama yang melayani request dari u
 | `/ready` | GET | Readiness check | IMPLEMENTED |
 | `/metrics` | GET | Prometheus metrics endpoint | IMPLEMENTED |
 
+## Health & Metrics Endpoints
+
+```
+GET /health
+Response: {"ok": true, "version": "1.0.0", "db": "ok"}
+- Checks DB connectivity
+- Returns 503 if unhealthy
+
+GET /ready
+Response: {"ready": true}
+- Checks DB connectivity
+
+GET /metrics
+Response: Prometheus text format
+- Exposes HTTP request metrics
+- Exposes provider request metrics
+- Exposes Go runtime metrics
+```
+
+## Prometheus Metrics (Implemented)
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `http_requests_total` | Counter | method, endpoint, status | Total HTTP requests |
+| `http_request_duration_seconds` | Histogram | method, endpoint | Request latency |
+| `http_active_requests` | Gauge | - | Currently active requests |
+| `provider_requests_total` | Counter | provider, status | Provider request count |
+| `provider_latency_seconds` | Histogram | provider | Provider response latency |
+
 ## Request Pipeline
 
 ```

@@ -397,9 +397,34 @@ func (r *pgApiKeyRepo) FindByID(ctx context.Context, id string) (*ApiKey, error)
 	row := r.driver.db.QueryRowContext(ctx, `SELECT id,user_id,name,key_prefix,key_hash,scopes,status,expires_at,last_used_at,created_at,revoked_at FROM api_keys WHERE id=$1`, id)
 	return r.scanApiKey(row)
 }
-func (r *pgApiKeyRepo) FindByHash(ctx context.Context, hash string) (*ApiKey, error) {
-	row := r.driver.db.QueryRowContext(ctx, `SELECT id,user_id,name,key_prefix,key_hash,scopes,status,expires_at,last_used_at,created_at,revoked_at FROM api_keys WHERE key_hash=$1 AND status='active'`, hash)
-	return r.scanApiKey(row)
+func (r *pgApiKeyRepo) FindByPrefix(ctx context.Context, prefix string) ([]*ApiKey, error) {
+	rows, err := r.driver.db.QueryContext(ctx, `SELECT id,user_id,name,key_prefix,key_hash,scopes,status,expires_at,last_used_at,created_at,revoked_at FROM api_keys WHERE key_prefix=$1`, prefix)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []*ApiKey
+	for rows.Next() {
+		if k, err := r.scanApiKeyRows(rows); err == nil {
+			result = append(result, k)
+		}
+	}
+	return result, rows.Err()
+}
+
+func (r *pgApiKeyRepo) FindActiveByPrefix(ctx context.Context, prefix string) ([]*ApiKey, error) {
+	rows, err := r.driver.db.QueryContext(ctx, `SELECT id,user_id,name,key_prefix,key_hash,scopes,status,expires_at,last_used_at,created_at,revoked_at FROM api_keys WHERE key_prefix=$1 AND status='active'`, prefix)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []*ApiKey
+	for rows.Next() {
+		if k, err := r.scanApiKeyRows(rows); err == nil {
+			result = append(result, k)
+		}
+	}
+	return result, rows.Err()
 }
 func (r *pgApiKeyRepo) FindByUserID(ctx context.Context, userID string) ([]*ApiKey, error) {
 	rows, err := r.driver.db.QueryContext(ctx, `SELECT id,user_id,name,key_prefix,key_hash,scopes,status,expires_at,last_used_at,created_at,revoked_at FROM api_keys WHERE user_id=$1`, userID)
@@ -778,13 +803,18 @@ func (r *pgUsageRepo) GetSummary(ctx context.Context, userID string, from, to in
 	row.Scan(&s.TotalRequests, &s.TotalPromptTokens, &s.TotalCompletionTokens, &s.TotalTokens, &s.TotalCost, &s.AvgLatencyMs, &s.ErrorCount)
 	return s, nil
 }
-func (r *pgUsageRepo) Cleanup(ctx context.Context, before int64) (int64, error) {
-	res, err := r.driver.db.ExecContext(ctx, `DELETE FROM usage_events WHERE created_at < TO_TIMESTAMP($1)`, before)
+
+func (r *pgUsageRepo) DeleteOlderThan(ctx context.Context, cutoff int64) (int64, error) {
+	res, err := r.driver.db.ExecContext(ctx, `DELETE FROM usage_events WHERE created_at < TO_TIMESTAMP($1)`, cutoff)
 	if err != nil {
 		return 0, err
 	}
 	n, _ := res.RowsAffected()
 	return n, nil
+}
+
+func (r *pgUsageRepo) Cleanup(ctx context.Context, before int64) (int64, error) {
+	return r.DeleteOlderThan(ctx, before)
 }
 
 type pgAuditRepo struct{ driver *pgDriver }
@@ -834,6 +864,15 @@ func (r *pgAuditRepo) List(ctx context.Context, f *AuditFilter) ([]*AuditLog, in
 		}
 	}
 	return result, int64(len(result)), rows.Err()
+}
+
+func (r *pgAuditRepo) DeleteOlderThan(ctx context.Context, cutoff int64) (int64, error) {
+	res, err := r.driver.db.ExecContext(ctx, `DELETE FROM audit_logs WHERE created_at < TO_TIMESTAMP($1)`, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
 }
 
 type pgSettingsRepo struct{ driver *pgDriver }

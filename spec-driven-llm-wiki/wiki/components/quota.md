@@ -66,18 +66,33 @@ func (s *MemoryStore) Allow(key string, limit int, window int) (bool, int) {
 ValidateRequest(userID, apiKeyID, modelID, tokens):
   1. Check model permission (CanUseModel)
      → Error: model_forbidden (403)
-  
-  2. Check quota policies
+
+  2. Check quota policies (monthly_token_cap, monthly_cost_cap)
      → Error: quota_exceeded (429)
-  
+
   3. Check rate limit (RPM)
-     → Error: rate_limited (429)
-  
+     → Error: rate_limit_exceeded (429)
+
   4. Check rate limit (TPM)
-     → Error: rate_limited (429)
-  
+     → Error: rate_limit_exceeded (429)
+
   → Pass: execute request
+  → On success: IncrementUsage() to deduct from quota
 ```
+
+## Quota Enforcement (Implemented)
+
+- Quota check happens BEFORE rate limit check (in middleware/ratelimit.go)
+- On successful request completion: `recordUsage()` calls `Quotas().IncrementUsage()`
+- Monthly token/cost caps tracked per user or api_key
+- Quota exceeded returns 429 with `{"error": "quota_exceeded", "message": "Monthly token quota exceeded"}`
+- Rate limit exceeded returns 429 with `{"error": "rate_limit_exceeded", "message": "..."}`
+
+## Retention Policy (Implemented)
+
+- Old usage events and audit logs cleaned up by retention worker
+- `internal/db/cleanup.go` - StartRetentionCleanup() runs daily
+- Config: `GOROUTER_USAGE_RETENTION_DAYS`, `GOROUTER_AUDIT_LOG_RETENTION_DAYS`
 
 ## Config
 

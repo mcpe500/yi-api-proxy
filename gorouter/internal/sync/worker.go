@@ -82,11 +82,19 @@ func (w *Worker) sync() {
 
 	var models []*db.Model
 	for _, p := range providers {
-		m, _ := w.db.Models().ListByProvider(ctx, p.ID)
+		m, err := w.db.Models().ListByProvider(ctx, p.ID)
+		if err != nil {
+			w.logger.Warn("Online sync: failed to load models for provider", "provider_id", p.ID, "error", err)
+			continue
+		}
 		models = append(models, m...)
 	}
 
-	combos, _ := w.db.Combos().List(ctx)
+	combos, err := w.db.Combos().List(ctx)
+	if err != nil {
+		w.logger.Error("Online sync failed to load combos", "error", err)
+		return
+	}
 
 	payload := SyncPayload{
 		Providers: providers,

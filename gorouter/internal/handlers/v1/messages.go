@@ -233,7 +233,7 @@ func (h *MessagesHandler) handleStreaming(ctx context.Context, w http.ResponseWr
 		if flusher, ok := w.(http.Flusher); ok {
 			flusher.Flush()
 		}
-		h.recordUsage(ctx, req, startTime, true, statusCode, finalModel, providerName, originalModel)
+		h.recordUsage(ctx, req, startTime, true, statusCode, finalModel, providerName, originalModel, nil)
 		return
 	}
 	defer upstreamReader.Close()
@@ -323,7 +323,7 @@ func (h *MessagesHandler) handleStreaming(ctx context.Context, w http.ResponseWr
 		flusher.Flush()
 	}
 
-	h.recordUsage(ctx, req, startTime, true, http.StatusOK, finalModel, providerName, originalModel)
+	h.recordUsage(ctx, req, startTime, true, http.StatusOK, finalModel, providerName, originalModel, nil)
 }
 
 func (h *MessagesHandler) handleNonStreaming(ctx context.Context, w http.ResponseWriter, req *ChatRequest, requestID string, startTime time.Time, originalModel string) {
@@ -343,7 +343,7 @@ func (h *MessagesHandler) handleNonStreaming(ctx context.Context, w http.Respons
 		writeAnthropicErrorBody(w, strings.TrimSpace(cw.buf.String()), errorTypeForStatus(statusCode))
 	}
 
-	h.recordUsage(ctx, req, startTime, false, statusCode, finalModel, providerName, originalModel)
+	h.recordUsage(ctx, req, startTime, false, statusCode, finalModel, providerName, originalModel, nil)
 }
 
 func (h *MessagesHandler) executeDirectRequest(ctx context.Context, w http.ResponseWriter, req *ChatRequest, requestID string) (provider, model string, statusCode int) {
@@ -607,7 +607,7 @@ func writeAnthropicErrorBody(w io.Writer, message, errType string) {
 	})
 }
 
-func (h *MessagesHandler) recordUsage(ctx context.Context, req *ChatRequest, startTime time.Time, isStream bool, statusCode int, model, provider, originalModel string) {
+func (h *MessagesHandler) recordUsage(ctx context.Context, req *ChatRequest, startTime time.Time, isStream bool, statusCode int, model, provider, originalModel string, usage *translator.NormalizedUsage) {
 	if h.DB == nil {
 		return
 	}
@@ -642,5 +642,25 @@ func (h *MessagesHandler) recordUsage(ctx context.Context, req *ChatRequest, sta
 		CreatedAt:      time.Now(),
 	}
 
+	if usage != nil {
+		event.PromptTokens = usage.PromptTokens
+		event.CompletionTokens = usage.CompletionTokens
+		event.TotalTokens = usage.TotalTokens
+		event.EstimatedCost = h.calculateModelCost(ctx, model, usage.PromptTokens, usage.CompletionTokens)
+	}
+
 	h.DB.UsageEvents().Create(ctx, event)
+}
+
+func (h *MessagesHandler) calculateModelCost(ctx context.Context, modelID string, promptTokens, completionTokens int) float64 {
+	models, err := h.DB.Models().ListEnabled(ctx)
+	if err != nil {
+		return 0
+	}
+	for _, m := range models {
+		if m.ModelID == modelID || m.ModelName == modelID || m.ID == modelID {
+			return calculateCost(promptTokens, completionTokens, m.InputCostPer1k, m.OutputCostPer1k)
+		}
+	}
+	return 0
 }

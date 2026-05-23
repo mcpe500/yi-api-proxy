@@ -13,6 +13,7 @@ import (
 	"github.com/gorouter/gorouter/internal/combo"
 	"github.com/gorouter/gorouter/internal/crypto"
 	"github.com/gorouter/gorouter/internal/db"
+	"github.com/gorouter/gorouter/internal/metrics"
 	"github.com/gorouter/gorouter/internal/middleware"
 	"github.com/gorouter/gorouter/internal/models"
 	"github.com/gorouter/gorouter/internal/routing"
@@ -352,6 +353,11 @@ func (h *ChatHandler) executeDirectRequest(ctx context.Context, w http.ResponseW
 				writeSSEError(w, err.Error())
 			}
 			resp.Body.Close()
+
+			// Record provider metrics for successful streaming requests
+			metrics.ProviderRequestsTotal.WithLabelValues(providerConn.Provider, targetModel.ModelID, "success").Inc()
+			metrics.ProviderLatency.WithLabelValues(providerConn.Provider).Observe(float64(latencyMs) / 1000.0)
+
 			return providerConn.Provider, targetModel.ModelID, http.StatusOK, nil
 		}
 		bodyBytes, _ := io.ReadAll(resp.Body)
@@ -359,6 +365,11 @@ func (h *ChatHandler) executeDirectRequest(ctx context.Context, w http.ResponseW
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		w.Write(bodyBytes)
+
+		// Record provider metrics for successful requests
+		metrics.ProviderRequestsTotal.WithLabelValues(providerConn.Provider, targetModel.ModelID, "success").Inc()
+		metrics.ProviderLatency.WithLabelValues(providerConn.Provider).Observe(float64(latencyMs) / 1000.0)
+
 		return providerConn.Provider, targetModel.ModelID, http.StatusOK, bodyBytes
 	}
 
@@ -427,6 +438,11 @@ func (h *ChatHandler) recordUsage(ctx context.Context, req *ChatRequest, startTi
 	event.LatencyMs = int(time.Since(startTime).Milliseconds())
 
 	h.DB.UsageEvents().Create(ctx, event)
+
+	// Record quota usage on successful requests (2xx status)
+	if statusCode >= 200 && statusCode < 300 && usage != nil && userID != "" {
+		h.DB.Quotas().IncrementUsage(ctx, userID, int64(usage.TotalTokens), event.EstimatedCost)
+	}
 }
 
 func convertToMapMessages(msgs []ChatMessage) []map[string]string {

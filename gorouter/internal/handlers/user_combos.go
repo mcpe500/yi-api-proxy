@@ -43,7 +43,23 @@ func (h *UserCombosHandler) Register(r chi.Router) {
 
 func (h *UserCombosHandler) RegisterAdmin(r chi.Router) {
 	r.Route("/combos", func(r chi.Router) {
+		r.Get("/", h.ListAllCombos)
 		r.Post("/auto-generate", h.AutoGenerateCombo)
+	})
+}
+
+func (h *UserCombosHandler) ListAllCombos(w http.ResponseWriter, r *http.Request) {
+	combos, err := h.db.Combos().List(r.Context())
+	if err != nil {
+		http.Error(w, `{"error":"failed to list combos"}`, http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"object": "list",
+		"data":   combos,
+		"total":  len(combos),
 	})
 }
 

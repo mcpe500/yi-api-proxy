@@ -110,7 +110,7 @@ func (d *sqliteDriver) migrate() error {
 			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_api_keys_user_id ON api_keys(user_id)`,
-		`CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash)`,
+		`CREATE INDEX IF NOT EXISTS idx_api_keys_prefix ON api_keys(key_prefix)`,
 
 		`CREATE TABLE IF NOT EXISTS providers (
 			id TEXT PRIMARY KEY,
@@ -446,11 +446,26 @@ func (r *sqliteApiKeyRepo) FindByID(ctx context.Context, id string) (*ApiKey, er
 	return r.scanApiKey(row)
 }
 
-func (r *sqliteApiKeyRepo) FindByHash(ctx context.Context, hash string) (*ApiKey, error) {
-	row := r.driver.db.QueryRowContext(ctx,
+func (r *sqliteApiKeyRepo) FindByPrefix(ctx context.Context, prefix string) ([]*ApiKey, error) {
+	rows, err := r.driver.db.QueryContext(ctx,
 		`SELECT id, user_id, name, key_prefix, key_hash, scopes, status, expires_at, last_used_at, created_at, revoked_at
-		 FROM api_keys WHERE key_hash = ? AND status = 'active'`, hash)
-	return r.scanApiKey(row)
+		 FROM api_keys WHERE key_prefix = ?`, prefix)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return r.scanApiKeys(rows)
+}
+
+func (r *sqliteApiKeyRepo) FindActiveByPrefix(ctx context.Context, prefix string) ([]*ApiKey, error) {
+	rows, err := r.driver.db.QueryContext(ctx,
+		`SELECT id, user_id, name, key_prefix, key_hash, scopes, status, expires_at, last_used_at, created_at, revoked_at
+		 FROM api_keys WHERE key_prefix = ? AND status = 'active'`, prefix)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return r.scanApiKeys(rows)
 }
 
 func (r *sqliteApiKeyRepo) FindByUserID(ctx context.Context, userID string) ([]*ApiKey, error) {
@@ -989,13 +1004,17 @@ func (r *sqliteUsageRepo) GetSummary(ctx context.Context, userID string, from, t
 	return s, err
 }
 
-func (r *sqliteUsageRepo) Cleanup(ctx context.Context, before int64) (int64, error) {
+func (r *sqliteUsageRepo) DeleteOlderThan(ctx context.Context, cutoff int64) (int64, error) {
 	res, err := r.driver.db.ExecContext(ctx,
-		`DELETE FROM usage_events WHERE created_at < ?`, time.Unix(before, 0))
+		`DELETE FROM usage_events WHERE created_at < ?`, time.Unix(cutoff, 0))
 	if err != nil {
 		return 0, err
 	}
 	return res.RowsAffected()
+}
+
+func (r *sqliteUsageRepo) Cleanup(ctx context.Context, before int64) (int64, error) {
+	return r.DeleteOlderThan(ctx, before)
 }
 
 func (r *sqliteUsageRepo) scanUsageEvents(rows *sql.Rows) ([]*UsageEvent, error) {
@@ -1094,6 +1113,15 @@ func (r *sqliteAuditRepo) List(ctx context.Context, filter *AuditFilter) ([]*Aud
 		result = append(result, l)
 	}
 	return result, total, nil
+}
+
+func (r *sqliteAuditRepo) DeleteOlderThan(ctx context.Context, cutoff int64) (int64, error) {
+	res, err := r.driver.db.ExecContext(ctx,
+		`DELETE FROM audit_logs WHERE created_at < ?`, time.Unix(cutoff, 0))
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 func (r *sqliteSettingsRepo) Get(ctx context.Context) (*Settings, error) {

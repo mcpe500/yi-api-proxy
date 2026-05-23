@@ -79,6 +79,9 @@
             case "apikeys": loadApiKeys(); break;
             case "providers": loadProviders(); break;
             case "models": loadModels(); break;
+            case "aliases": loadAliases(); break;
+            case "combos": loadCombos(); break;
+            case "quotas": loadQuotas(); break;
             case "usage": loadUsage(); break;
         }
     }
@@ -123,7 +126,8 @@
     async function loadUsers() {
         try {
             const res = await api("/admin/users");
-            const users = res.data || res || [];
+            const users = Array.isArray(res.data) ? res.data :
+                Array.isArray(res) ? res : [];
             const tbody = $("#users-table tbody");
             tbody.innerHTML = users.map((u) => `<tr>
                 <td>${esc(u.email)}</td>
@@ -146,7 +150,9 @@
     async function loadApiKeys() {
         try {
             const res = await api("/admin/api-keys");
-            const keys = res.keys || res.data || res || [];
+            const keys = Array.isArray(res.keys) ? res.keys :
+                Array.isArray(res.data) ? res.data :
+                Array.isArray(res) ? res : [];
             const tbody = $("#apikeys-table tbody");
             tbody.innerHTML = keys.map((k) => `<tr>
                 <td>${esc(k.name)}</td>
@@ -168,7 +174,8 @@
     async function loadProviders() {
         try {
             const res = await api("/admin/providers");
-            const providers = res.data || res || [];
+            const providers = Array.isArray(res.data) ? res.data :
+                Array.isArray(res) ? res : [];
             const tbody = $("#providers-table tbody");
             tbody.innerHTML = providers.map((p) => `<tr>
                 <td>${esc(p.name)}</td>
@@ -189,7 +196,8 @@
     async function loadModels() {
         try {
             const res = await api("/admin/models");
-            const models = res.data || res || [];
+            const models = Array.isArray(res.data) ? res.data :
+                Array.isArray(res) ? res : [];
             const tbody = $("#models-table tbody");
             tbody.innerHTML = models.map((m) => `<tr>
                 <td>${esc(m.display_name || m.model_id)}</td>
@@ -206,6 +214,72 @@
             </tr>`).join("");
         } catch (e) {
             toast("Failed to load models: " + e.message);
+        }
+    }
+
+    async function loadAliases() {
+        try {
+            const res = await api("/admin/aliases");
+            const aliases = Array.isArray(res.data) ? res.data :
+                Array.isArray(res) ? res : [];
+            const tbody = $("#aliases-table tbody");
+            tbody.innerHTML = aliases.map((a) => `<tr>
+                <td>${esc(a.name)}</td>
+                <td><code>${esc(a.target_id)}</code></td>
+                <td>${esc(a.provider || "-")}</td>
+                <td>${esc(a.description || "-")}</td>
+                <td class="actions-cell">
+                    <button class="btn btn-sm btn-secondary" onclick="window._editAlias('${a.id}')">Edit</button>
+                    <button class="btn btn-sm btn-danger" onclick="window._deleteAlias('${a.id}')">Delete</button>
+                </td>
+            </tr>`).join("");
+        } catch (e) {
+            toast("Failed to load aliases: " + e.message);
+        }
+    }
+
+    async function loadCombos() {
+        try {
+            const res = await api("/admin/combos");
+            const combos = Array.isArray(res.data) ? res.data :
+                Array.isArray(res) ? res : [];
+            const tbody = $("#combos-table tbody");
+            tbody.innerHTML = combos.map((c) => `<tr>
+                <td>${esc(c.name)}</td>
+                <td>${esc(c.description || "-")}</td>
+                <td>${esc(c.user_id)}</td>
+                <td>${c.items ? c.items.length : 0}</td>
+                <td><span class="badge badge-${c.is_active ? 'active' : 'disabled'}">${c.is_active ? "Active" : "Inactive"}</span></td>
+                <td class="actions-cell">
+                    <button class="btn btn-sm btn-secondary" onclick="window._viewCombo('${c.id}')">View</button>
+                </td>
+            </tr>`).join("");
+        } catch (e) {
+            toast("Failed to load combos: " + e.message);
+        }
+    }
+
+    async function loadQuotas() {
+        try {
+            const res = await api("/admin/quotas");
+            const quotas = Array.isArray(res.data) ? res.data :
+                Array.isArray(res) ? res : [];
+            const tbody = $("#quotas-table tbody");
+            tbody.innerHTML = quotas.map((q) => `<tr>
+                <td>${esc(q.user_id)}</td>
+                <td>${q.monthly_token_cap ? q.monthly_token_cap.toLocaleString() : "-"}</td>
+                <td>${q.monthly_cost_cap ? "$" + q.monthly_cost_cap.toFixed(4) : "-"}</td>
+                <td>${q.used_tokens ? q.used_tokens.toLocaleString() : 0}</td>
+                <td>${q.used_cost ? "$" + q.used_cost.toFixed(4) : "$0.0000"}</td>
+                <td>${q.reset_at ? esc(new Date(q.reset_at).toLocaleDateString()) : "-"}</td>
+                <td class="actions-cell">
+                    <button class="btn btn-sm btn-secondary" onclick="window._editQuota('${q.id}')">Edit</button>
+                    <button class="btn btn-sm btn-primary" onclick="window._resetQuota('${q.id}')">Reset</button>
+                    <button class="btn btn-sm btn-danger" onclick="window._deleteQuota('${q.id}')">Delete</button>
+                </td>
+            </tr>`).join("");
+        } catch (e) {
+            toast("Failed to load quotas: " + e.message);
         }
     }
 
@@ -486,6 +560,109 @@
         } catch (err) { toast(err.message); }
     };
 
+    window._editAlias = async (id) => {
+        try {
+            const res = await api("/admin/aliases/" + id);
+            const a = res.data || res;
+            openModal("Edit Alias", `
+                <form id="edit-alias-form">
+                    <input type="hidden" id="ea-id" value="${esc(a.id)}">
+                    <div class="form-group"><label>Name</label><input type="text" id="ea-name" value="${esc(a.name)}" required></div>
+                    <div class="form-group"><label>Target ID</label><input type="text" id="ea-target" value="${esc(a.target_id)}" required></div>
+                    <div class="form-group"><label>Provider</label><input type="text" id="ea-provider" value="${esc(a.provider || "")}"></div>
+                    <div class="form-group"><label>Description</label><input type="text" id="ea-desc" value="${esc(a.description || "")}"></div>
+                    <button type="submit" class="btn btn-primary">Save</button>
+                </form>
+            `);
+            $("#edit-alias-form").addEventListener("submit", async (e) => {
+                e.preventDefault();
+                try {
+                    const body = {
+                        name: $("#ea-name").value,
+                        target_id: $("#ea-target").value,
+                        provider: $("#ea-provider").value,
+                        description: $("#ea-desc").value,
+                    };
+                    await api("/admin/aliases/" + $("#ea-id").value, { method: "PUT", body: JSON.stringify(body) });
+                    closeModal();
+                    toast("Alias updated", "success");
+                    loadAliases();
+                } catch (err) { toast(err.message); }
+            });
+        } catch (err) { toast(err.message); }
+    };
+
+    window._deleteAlias = async (id) => {
+        if (!confirm("Delete this alias?")) return;
+        try {
+            await api("/admin/aliases/" + id, { method: "DELETE" });
+            toast("Alias deleted", "success");
+            loadAliases();
+        } catch (err) { toast(err.message); }
+    };
+
+    window._viewCombo = async (id) => {
+        try {
+            const res = await api("/admin/combos/" + id);
+            const c = res.data || res;
+            openModal("Combo Details", `
+                <div class="combo-detail">
+                    <p><strong>Name:</strong> ${esc(c.name)}</p>
+                    <p><strong>Description:</strong> ${esc(c.description || "-")}</p>
+                    <p><strong>User ID:</strong> ${esc(c.user_id)}</p>
+                    <p><strong>Status:</strong> ${c.is_active ? "Active" : "Inactive"}</p>
+                    <p><strong>Items:</strong> ${c.items ? c.items.length : 0}</p>
+                </div>
+            `);
+        } catch (err) { toast(err.message); }
+    };
+
+    window._editQuota = async (id) => {
+        try {
+            const res = await api("/admin/quotas/" + id);
+            const q = res.data || res;
+            openModal("Edit Quota", `
+                <form id="edit-quota-form">
+                    <input type="hidden" id="eq-id" value="${esc(q.id)}">
+                    <div class="form-group"><label>Monthly Token Cap</label><input type="number" id="eq-token-cap" value="${q.monthly_token_cap || 0}"></div>
+                    <div class="form-group"><label>Monthly Cost Cap ($)</label><input type="number" step="0.0001" id="eq-cost-cap" value="${q.monthly_cost_cap || 0}"></div>
+                    <button type="submit" class="btn btn-primary">Save</button>
+                </form>
+            `);
+            $("#edit-quota-form").addEventListener("submit", async (e) => {
+                e.preventDefault();
+                try {
+                    const body = {
+                        monthly_token_cap: parseInt($("#eq-token-cap").value) || 0,
+                        monthly_cost_cap: parseFloat($("#eq-cost-cap").value) || 0,
+                    };
+                    await api("/admin/quotas/" + $("#eq-id").value, { method: "PUT", body: JSON.stringify(body) });
+                    closeModal();
+                    toast("Quota updated", "success");
+                    loadQuotas();
+                } catch (err) { toast(err.message); }
+            });
+        } catch (err) { toast(err.message); }
+    };
+
+    window._resetQuota = async (id) => {
+        if (!confirm("Reset this quota's usage?")) return;
+        try {
+            await api("/admin/quotas/" + id + "/reset-usage", { method: "POST" });
+            toast("Quota reset", "success");
+            loadQuotas();
+        } catch (err) { toast(err.message); }
+    };
+
+    window._deleteQuota = async (id) => {
+        if (!confirm("Delete this quota?")) return;
+        try {
+            await api("/admin/quotas/" + id, { method: "DELETE" });
+            toast("Quota deleted", "success");
+            loadQuotas();
+        } catch (err) { toast(err.message); }
+    };
+
     document.addEventListener("DOMContentLoaded", () => {
         showPage("login-page");
 
@@ -496,7 +673,7 @@
             const errEl = $("#login-error");
             errEl.classList.add("hidden");
             try {
-                const res = await api("/api/auth/login", {
+                const res = await api("/auth/login", {
                     method: "POST",
                     body: JSON.stringify({ email, password }),
                 });
@@ -676,6 +853,62 @@
                     closeModal();
                     toast("Model created", "success");
                     loadModels();
+                } catch (err) { toast(err.message); }
+            });
+        });
+
+        $("#btn-add-alias") && $("#btn-add-alias").addEventListener("click", () => {
+            openModal("Add Alias", `
+                <form id="add-alias-form">
+                    <div class="form-group"><label>Name</label><input type="text" id="aa-name" required></div>
+                    <div class="form-group"><label>Target ID</label><input type="text" id="aa-target" required></div>
+                    <div class="form-group"><label>Provider</label><input type="text" id="aa-provider"></div>
+                    <div class="form-group"><label>Description</label><input type="text" id="aa-desc"></div>
+                    <button type="submit" class="btn btn-primary">Create Alias</button>
+                </form>
+            `);
+            $("#add-alias-form").addEventListener("submit", async (e) => {
+                e.preventDefault();
+                try {
+                    await api("/admin/aliases", {
+                        method: "POST",
+                        body: JSON.stringify({
+                            name: $("#aa-name").value,
+                            target_id: $("#aa-target").value,
+                            provider: $("#aa-provider").value,
+                            description: $("#aa-desc").value,
+                        }),
+                    });
+                    closeModal();
+                    toast("Alias created", "success");
+                    loadAliases();
+                } catch (err) { toast(err.message); }
+            });
+        });
+
+        $("#btn-add-quota") && $("#btn-add-quota").addEventListener("click", () => {
+            openModal("Add Quota", `
+                <form id="add-quota-form">
+                    <div class="form-group"><label>User ID</label><input type="text" id="aq-user-id" required></div>
+                    <div class="form-group"><label>Monthly Token Cap</label><input type="number" id="aq-token-cap" value="0"></div>
+                    <div class="form-group"><label>Monthly Cost Cap ($)</label><input type="number" step="0.0001" id="aq-cost-cap" value="0"></div>
+                    <button type="submit" class="btn btn-primary">Create Quota</button>
+                </form>
+            `);
+            $("#add-quota-form").addEventListener("submit", async (e) => {
+                e.preventDefault();
+                try {
+                    await api("/admin/quotas", {
+                        method: "POST",
+                        body: JSON.stringify({
+                            user_id: $("#aq-user-id").value,
+                            monthly_token_cap: parseInt($("#aq-token-cap").value) || 0,
+                            monthly_cost_cap: parseFloat($("#aq-cost-cap").value) || 0,
+                        }),
+                    });
+                    closeModal();
+                    toast("Quota created", "success");
+                    loadQuotas();
                 } catch (err) { toast(err.message); }
             });
         });

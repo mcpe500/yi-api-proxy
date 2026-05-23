@@ -304,15 +304,11 @@ func (h *ResponsesHandler) handleNonStreaming(ctx context.Context, w http.Respon
 	providerName, finalModel, statusCode, usage := h.executeChatRequest(ctx, w, req, messages, requestID, false)
 
 	if statusCode != http.StatusOK {
-		h.recordUsage(ctx, req, messages, startTime, false, statusCode, finalModel, providerName)
+		h.recordUsage(ctx, req, messages, startTime, false, statusCode, finalModel, providerName, nil)
 		return
 	}
 
-	if usage != nil {
-		_ = usage
-	}
-
-	h.recordUsage(ctx, req, messages, startTime, false, statusCode, finalModel, providerName)
+	h.recordUsage(ctx, req, messages, startTime, false, statusCode, finalModel, providerName, usage)
 }
 
 func (h *ResponsesHandler) handleStreaming(ctx context.Context, w http.ResponseWriter, req *ResponsesRequest, messages []translator.NormalizedMessage, requestID string, startTime time.Time) {
@@ -331,7 +327,7 @@ func (h *ResponsesHandler) handleStreaming(ctx context.Context, w http.ResponseW
 	if err != nil {
 		writeSSEError(w, "upstream request failed: "+err.Error())
 		flusher.Flush()
-		h.recordUsage(ctx, req, messages, startTime, true, http.StatusBadGateway, req.Model, "unknown")
+		h.recordUsage(ctx, req, messages, startTime, true, http.StatusBadGateway, req.Model, "unknown", nil)
 		return
 	}
 	defer upstream.Close()
@@ -419,7 +415,16 @@ func (h *ResponsesHandler) handleStreaming(ctx context.Context, w http.ResponseW
 		h.Logger.Error("streaming scan error", "err", err)
 	}
 
-	h.recordUsage(ctx, req, messages, startTime, true, http.StatusOK, req.Model, "unknown")
+	var normUsage *translator.NormalizedUsage
+	if totalUsage != nil {
+		normUsage = &translator.NormalizedUsage{
+			PromptTokens:     totalUsage.InputTokens,
+			CompletionTokens: totalUsage.OutputTokens,
+			TotalTokens:      totalUsage.TotalTokens,
+		}
+	}
+
+	h.recordUsage(ctx, req, messages, startTime, true, http.StatusOK, req.Model, "unknown", normUsage)
 }
 
 func convertChatChunkToResponsesStream(chunk streaming.ChatCompletionChunk, respID string, created int64) ResponsesStreamChunk {
@@ -756,7 +761,7 @@ func writeResponsesError(w http.ResponseWriter, message, errType, code string, s
 	})
 }
 
-func (h *ResponsesHandler) recordUsage(ctx context.Context, req *ResponsesRequest, messages []translator.NormalizedMessage, startTime time.Time, isStream bool, statusCode int, model, provider string) {
+func (h *ResponsesHandler) recordUsage(ctx context.Context, req *ResponsesRequest, messages []translator.NormalizedMessage, startTime time.Time, isStream bool, statusCode int, model, provider string, usage *translator.NormalizedUsage) {
 	if h.DB == nil {
 		return
 	}
@@ -789,6 +794,13 @@ func (h *ResponsesHandler) recordUsage(ctx context.Context, req *ResponsesReques
 		IsStream:       isStream,
 		LatencyMs:      int(time.Since(startTime).Milliseconds()),
 		CreatedAt:      time.Now(),
+	}
+
+	if usage != nil {
+		event.PromptTokens = usage.PromptTokens
+		event.CompletionTokens = usage.CompletionTokens
+		event.TotalTokens = usage.TotalTokens
+		event.EstimatedCost = h.calculateModelCost(ctx, model, usage.PromptTokens, usage.CompletionTokens)
 	}
 
 	h.DB.UsageEvents().Create(ctx, event)
@@ -845,6 +857,19 @@ func (b *bodyReader) Seek(offset int64, whence int) (int64, error) {
 	}
 	b.pos = newPos
 	return int64(newPos), nil
+}
+
+func (h *ResponsesHandler) calculateModelCost(ctx context.Context, modelID string, promptTokens, completionTokens int) float64 {
+	models, err := h.DB.Models().ListEnabled(ctx)
+	if err != nil {
+		return 0
+	}
+	for _, m := range models {
+		if m.ModelID == modelID || m.ModelName == modelID || m.ID == modelID {
+			return calculateCost(promptTokens, completionTokens, m.InputCostPer1k, m.OutputCostPer1k)
+		}
+	}
+	return 0
 }
 
 func convertUsageToResponses(body io.Reader, respID, model string, usage *translator.NormalizedUsage) *ResponsesAPIResponse {

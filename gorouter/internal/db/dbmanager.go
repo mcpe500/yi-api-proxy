@@ -65,7 +65,8 @@ type UserRepository interface {
 type ApiKeyRepository interface {
 	Create(ctx context.Context, key *ApiKey) error
 	FindByID(ctx context.Context, id string) (*ApiKey, error)
-	FindByHash(ctx context.Context, hash string) (*ApiKey, error)
+	FindByPrefix(ctx context.Context, prefix string) ([]*ApiKey, error)
+	FindActiveByPrefix(ctx context.Context, prefix string) ([]*ApiKey, error)
 	FindByUserID(ctx context.Context, userID string) ([]*ApiKey, error)
 	List(ctx context.Context) ([]*ApiKey, error)
 	Update(ctx context.Context, key *ApiKey) error
@@ -118,13 +119,14 @@ type UsageRepository interface {
 	FindByUserID(ctx context.Context, userID string, limit int) ([]*UsageEvent, error)
 	FindByDateRange(ctx context.Context, userID string, from, to int64) ([]*UsageEvent, error)
 	GetSummary(ctx context.Context, userID string, from, to int64) (*UsageSummary, error)
-	Cleanup(ctx context.Context, before int64) (int64, error)
+	DeleteOlderThan(ctx context.Context, cutoff int64) (int64, error)
 }
 
 type AuditRepository interface {
 	Create(ctx context.Context, log *AuditLog) error
 	FindByID(ctx context.Context, id string) (*AuditLog, error)
 	List(ctx context.Context, filter *AuditFilter) ([]*AuditLog, int64, error)
+	DeleteOlderThan(ctx context.Context, cutoff int64) (int64, error)
 }
 
 type SettingsRepository interface {
@@ -643,14 +645,26 @@ func (r *jsonApiKeyRepo) FindByID(ctx context.Context, id string) (*ApiKey, erro
 	return store.ApiKeys[id], nil
 }
 
-func (r *jsonApiKeyRepo) FindByHash(ctx context.Context, hash string) (*ApiKey, error) {
+func (r *jsonApiKeyRepo) FindByPrefix(ctx context.Context, prefix string) ([]*ApiKey, error) {
 	store := r.driver.load()
+	var result []*ApiKey
 	for _, k := range store.ApiKeys {
-		if k.KeyHash == hash && k.Status == "active" {
-			return k, nil
+		if k.KeyPrefix == prefix {
+			result = append(result, k)
 		}
 	}
-	return nil, nil
+	return result, nil
+}
+
+func (r *jsonApiKeyRepo) FindActiveByPrefix(ctx context.Context, prefix string) ([]*ApiKey, error) {
+	store := r.driver.load()
+	var result []*ApiKey
+	for _, k := range store.ApiKeys {
+		if k.KeyPrefix == prefix && k.Status == "active" {
+			result = append(result, k)
+		}
+	}
+	return result, nil
 }
 
 func (r *jsonApiKeyRepo) FindByUserID(ctx context.Context, userID string) ([]*ApiKey, error) {
@@ -1122,6 +1136,20 @@ func (r *jsonUsageRepo) Cleanup(ctx context.Context, before int64) (int64, error
 	return 0, nil
 }
 
+func (r *jsonUsageRepo) DeleteOlderThan(ctx context.Context, cutoff int64) (int64, error) {
+	store := r.driver.load()
+	var deleted int64
+	r.driver.mu.Lock()
+	defer r.driver.mu.Unlock()
+	for id, ue := range store.UsageEvents {
+		if ue.CreatedAt.Unix() < cutoff {
+			delete(store.UsageEvents, id)
+			deleted++
+		}
+	}
+	return deleted, nil
+}
+
 type jsonAuditRepo struct {
 	driver *jsonDriver
 }
@@ -1161,6 +1189,20 @@ func (r *jsonAuditRepo) List(ctx context.Context, filter *AuditFilter) ([]*Audit
 		result = append(result, l)
 	}
 	return result, int64(len(result)), nil
+}
+
+func (r *jsonAuditRepo) DeleteOlderThan(ctx context.Context, cutoff int64) (int64, error) {
+	store := r.driver.load()
+	var deleted int64
+	r.driver.mu.Lock()
+	defer r.driver.mu.Unlock()
+	for id, al := range store.AuditLogs {
+		if al.CreatedAt.Unix() < cutoff {
+			delete(store.AuditLogs, id)
+			deleted++
+		}
+	}
+	return deleted, nil
 }
 
 type jsonSettingsRepo struct {
